@@ -1,0 +1,1149 @@
+
+# Moneyball Phil — All-in-One App
+# Version: 2.0 (Banner + Global Parlay + 6 Modules)
+# --------------------------------------------------
+# Modules included:
+#  - NFL Prop Simulator (as provided)
+#  - ATS & Totals (v3.3)
+#  - MLB Hit Simulator
+#  - Pitcher ER & K Simulator
+#  - NBA Simulator
+#  - Soccer EV App (v3.2)
+# Shared:
+#  - Fixed top banner (uses your image)
+#  - Global Parlay Builder (accepts saved legs from any module + manual book odds)
+
+import streamlit as st
+import base64, os, math, uuid, datetime
+import pandas as pd
+from typing import List, Dict, Optional
+from dataclasses import dataclass
+
+# ---------------------------
+# Page Config (once only)
+# ---------------------------
+st.set_page_config(page_title="Moneyball Phil — All-in-One", layout="wide")
+
+# ---------------------------
+# Fixed Top Banner
+# ---------------------------
+def _read_banner_bytes() -> Optional[bytes]:
+    # Try common filenames; feel free to rename to your banner file.
+    candidates = [
+        "moneyball_banner.jpg",
+        "moneyball_banner.png",
+        "banner.jpg",
+        "banner.png",
+        # Uploaded name seen in chat session (fallback; you can delete if not needed)
+        "49d98cd1-f86b-4dbc-848a-7f83b9ffc5ab.jpg",
+    ]
+    for name in candidates:
+        if os.path.exists(name):
+            try:
+                with open(name, "rb") as f:
+                    return f.read()
+            except Exception:
+                pass
+    return None
+
+_banner = _read_banner_bytes()
+if _banner:
+    banner_b64 = base64.b64encode(_banner).decode()
+    banner_img_html = f'<img src="data:image/jpeg;base64,{banner_b64}" style="height:120px;object-fit:contain;" />'
+else:
+    banner_img_html = "<div style='height:120px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;'>Moneyball Phil</div>"
+
+st.markdown(f"""
+    <style>
+    .fixed-banner {{
+        position: fixed; top: 0; left: 0; right: 0;
+        height: 120px; background: #000; z-index: 9999;
+        display:flex; align-items:center; justify-content:center;
+        border-bottom: 1px solid #222;
+    }}
+    .app-content {{ margin-top: 130px; }}
+    </style>
+    <div class="fixed-banner">{banner_img_html}</div>
+""", unsafe_allow_html=True)
+st.markdown('<div class="app-content">', unsafe_allow_html=True)
+
+# ---------------------------
+# Global Session / Helpers
+# ---------------------------
+if "global_parlay" not in st.session_state:
+    st.session_state.global_parlay: List[Dict] = []
+
+def american_to_prob(odds: float) -> float:
+    # returns probability in [0,1]
+    if odds >= 0:
+        return 100.0 / (odds + 100.0)
+    return abs(odds) / (abs(odds) + 100.0)
+
+def american_to_decimal(odds: float) -> float:
+    if odds >= 0:
+        return 1.0 + (odds / 100.0)
+    return 1.0 + (100.0 / abs(odds))
+
+def decimal_to_american(dec: float) -> int:
+    if dec <= 1.0: return 0
+    if dec >= 2.0: return round((dec - 1.0) * 100)
+    return -round(100.0 / (dec - 1.0))
+
+def add_to_global_parlay(sport: str, description: str, odds_american: float, true_prob_frac: float):
+    st.session_state.global_parlay.append({
+        "id": str(uuid.uuid4())[:8],
+        "sport": sport,
+        "description": description,
+        "odds": float(odds_american),
+        "true_prob": float(true_prob_frac),
+    })
+
+def render_global_parlay_builder():
+    st.markdown("---")
+    st.header("🌍 Global Parlay Builder (All Sports)")
+
+    legs = st.session_state.get("global_parlay", [])
+    if not legs:
+        st.info("No global legs saved yet. Use “Add to Global Parlay” inside any module.")
+        return
+
+    # Table
+    for i, leg in enumerate(legs):
+        c1, c2, c3, c4, c5 = st.columns([1.1, 4, 1.2, 1.2, 0.8])
+        c1.write(leg["sport"])
+        c2.write(leg["description"])
+        c3.write(f"Odds: {int(leg['odds'])}")
+        c4.write(f"True: {leg['true_prob']*100:.2f}%")
+        with c5:
+            if st.button("🗑️", key=f"rm_gl_{leg['id']}"):
+                st.session_state.global_parlay = [x for x in legs if x["id"] != leg["id"]]
+                st.rerun()
+
+    cc1, cc2 = st.columns([1,1])
+    with cc1:
+        if st.button("🧹 Clear All Global Legs"):
+            st.session_state.global_parlay = []
+            st.success("Global parlay cleared.")
+            st.rerun()
+
+    # Manual sportsbook parlay odds (American)
+    st.markdown("### Sportsbook Parlay Odds (manual)")
+    book_odds_str = st.text_input("Enter combined sportsbook odds (American, e.g., +650 or -120):", value="", key="global_book_odds")
+    implied_book = None
+    if book_odds_str.strip():
+        try:
+            book_odds_val = float(book_odds_str.replace("+",""))
+            implied_book = american_to_prob(book_odds_val)  # [0..1]
+        except Exception:
+            st.warning("Could not parse the American odds you entered.")
+
+    # Compute true parlay %, implied, edge, EV
+    true_parlay = 1.0
+    dec_product = 1.0
+    for leg in legs:
+        true_parlay *= max(0.0, min(1.0, float(leg["true_prob"])))
+        dec_product *= american_to_decimal(float(leg["odds"]))
+
+    auto_american = decimal_to_american(dec_product)
+    implied_auto = american_to_prob(auto_american)
+
+    st.markdown("---")
+    g1, g2, g3, g4, g5 = st.columns(5)
+    g1.metric("Legs", f"{len(legs)}")
+    g2.metric("True Parlay %", f"{true_parlay*100:.2f}%")
+    g3.metric("Auto Combined Odds", f"{auto_american:+d}")
+    g4.metric("Auto Implied %", f"{implied_auto*100:.2f}%")
+    if implied_book is not None:
+        g5.metric("Book Implied %", f"{implied_book*100:.2f}%")
+    else:
+        g5.metric("Book Implied %", "—")
+
+    # EV with used price (book if provided, else auto)
+    if implied_book is not None:
+        used_implied = implied_book
+        used_dec = american_to_decimal(book_odds_val)
+    else:
+        used_implied = implied_auto
+        used_dec = dec_product
+
+    edge_pp = (true_parlay - used_implied) * 100.0
+    roi_per_dollar = (true_parlay * (used_dec - 1.0)) - (1.0 - true_parlay)
+    ev_pct = roi_per_dollar * 100.0
+
+    st.write(f"**Edge (pp):** {edge_pp:.2f} pp  |  **EV % (ROI/$1):** {ev_pct:.2f}%")
+
+    # Parlay Tier (EV-based)
+    if ev_pct >= 10.0:
+        tier = "🟢 Elite"
+    elif ev_pct >= 5.0:
+        tier = "🟡 Strong"
+    elif ev_pct >= 0.0:
+        tier = "🟠 Moderate"
+    else:
+        tier = "🔴 Risky"
+    st.write(f"**Parlay Tier:** {tier}")
+
+    # Copy-ready tracker row
+    legs_text = " + ".join([f"{leg['sport']}: {leg['description']}" for leg in legs])
+    used_amer_for_text = book_odds_val if implied_book is not None else auto_american
+    st.markdown("#### Copy-ready Tracker Row")
+    st.code(
+        f"{datetime.date.today()} | {legs_text} | {int(used_amer_for_text)} | "
+        f"True {true_parlay*100:.2f}% | Implied {used_implied*100:.2f}% | "
+        f"EV {ev_pct:.2f}% | Edge {edge_pp:.2f} pp | {tier}",
+        language="text"
+    )
+
+# =====================================================
+# =============== MODULE: NFL Props ===================
+# (Original user code, wrapped; minor additions to send global legs)
+# =====================================================
+import math as _math_nfl
+
+def nfl_app():
+    st.header("🏈 Moneyball Phil: NFL Prop Simulator (v2.5)")
+
+    # ---- Session State ----
+    if "nfl_all_props" not in st.session_state:
+        st.session_state.nfl_all_props = []
+    if "nfl_temp_props" not in st.session_state:
+        st.session_state.nfl_temp_props = []
+
+    # ---- Helpers ----
+    def implied_prob(odds: float) -> float:
+        if odds == 0: return 0.0
+        return (abs(odds) / (abs(odds) + 100)) if odds < 0 else (100 / (odds + 100))
+
+    def ev_calc(true_prob_frac: float, odds: float) -> float:
+        return round((true_prob_frac - implied_prob(odds)) * 100, 2)
+
+    def get_tier(prob_pct: float) -> str:
+        if prob_pct >= 80: return "🟢 Elite"
+        elif prob_pct >= 65: return "🟡 Strong"
+        elif prob_pct >= 50: return "🟠 Moderate"
+        else: return "🔴 Risky"
+
+    def logistic_prob(x_value: float, line_value: float, scale: float = 15.0) -> float:
+        try:
+            p = 1.0 / (1.0 + _math_nfl.exp(-(x_value - line_value) / scale))
+        except OverflowError:
+            p = 0.0 if (x_value - line_value) < 0 else 1.0
+        return round(p * 100.0, 2)
+
+    def classify_def_tier(yds_allowed: float) -> str:
+        if yds_allowed < 210: return "🔴 Tough"
+        elif yds_allowed <= 240: return "🟡 Average"
+        else: return "🟢 Easy"
+
+    def apply_defense_adjustments(ypg: float, tpg: float, tier: str):
+        if tier == "🔴 Tough": return ypg - 10, tpg - 0.2
+        elif tier == "🟢 Easy": return ypg + 10, tpg + 0.2
+        return ypg, tpg
+
+    def add_temp_play(player: str, prop: str, true_prob_pct: float, odds: float, group: str):
+        st.session_state.nfl_temp_props.append({
+            "id": str(uuid.uuid4()),
+            "Player": player,
+            "Prop": prop,
+            "True Prob": round(true_prob_pct, 2),
+            "Odds": odds,
+            "Group": group
+        })
+
+    # ---- UI Common Helpers ----
+    def render_temp_save_controls():
+        if not st.session_state.nfl_temp_props:
+            return
+        st.subheader("📝 Save Plays from Latest Simulation")
+        to_save = []
+        for p in st.session_state.nfl_temp_props:
+            col1, col2, col3, col4, col5 = st.columns([4, 2, 2, 2, 2])
+            with col1:
+                st.markdown(f"**{p['Player']} – {p['Prop']}**  \nTrue: `{p['True Prob']}%` | Odds: `{p['Odds']}`")
+            with col2:
+                ev = ev_calc(p["True Prob"]/100.0, p["Odds"])
+                st.markdown(f"EV: `{ev}%`")
+            with col3:
+                tier = get_tier(p["True Prob"])
+                st.markdown(f"Tier: {tier}")
+            with col4:
+                if st.checkbox("Save", key=f"save_{p['id']}"):
+                    to_save.append(p)
+            with col5:
+                if st.button("🌍 Add", key=f"add_gl_{p['id']}"):
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], p["True Prob"]/100.0)
+                    st.success("Added to Global Parlay")
+        if st.button("➕ Add Selected to Board"):
+            for p in to_save:
+                st.session_state.nfl_all_props.append(p)
+            st.session_state.nfl_temp_props = []
+            st.success("Selected plays added to Top Player Board.")
+
+    def render_board():
+        st.markdown("---")
+        st.subheader("📊 Top Player Board (Saved Plays)")
+        if not st.session_state.nfl_all_props:
+            st.info("No saved plays yet.")
+            return
+        sorted_props = sorted(st.session_state.nfl_all_props, key=lambda x: x["True Prob"], reverse=True)
+        for p in sorted_props:
+            p["_ev"] = ev_calc(p["True Prob"]/100.0, p["Odds"])
+            p["_tier"] = get_tier(p["True Prob"])
+            col1, col2, col3, col4, col5 = st.columns([4, 2, 2, 2, 2])
+            with col1: st.markdown(f"**{p['Player']} – {p['Prop']}**  \nGroup: `{p['Group']}`")
+            with col2: st.markdown(f"True: `{p['True Prob']}%`")
+            with col3: st.markdown(f"Odds: `{p['Odds']}`  \nEV: `{p['_ev']}%`")
+            with col4: st.markdown(f"Tier: {p['_tier']}")
+            with col5:
+                if st.button("🌍 Add", key=f"add_gl_board_{p['id']}"):
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], p["True Prob"]/100.0)
+                    st.success("Added to Global Parlay")
+
+    # ---- Position Selector ----
+    position = st.selectbox("Select Position", ["Quarterback", "Wide Receiver", "Running Back"])
+
+    # ---- Modules ----
+    if position == "Quarterback":
+        st.header("🎯 Quarterback Inputs")
+        name = st.text_input("Quarterback Name", value="")
+        opp = st.text_input("Opponent Team", value="")
+        std_line = st.number_input("Standard Passing Yards Line", value=0.0)
+        over_std = st.number_input("Odds Over (Standard)", value=0.0)
+        under_std = st.number_input("Odds Under (Standard)", value=0.0)
+        alt_line = st.number_input("Alt Over Line", value=0.0)
+        alt_odds = st.number_input("Odds for Alt Over", value=0.0)
+        td_line = st.number_input("Passing TD Line", value=1.5)
+        td_under_odds = st.number_input("Odds for Under TDs", value=0.0)
+        ypg = st.number_input("QB Yards/Game", value=0.0)
+        tds = st.number_input("QB TD/Game", value=0.0)
+        def_yds = st.number_input("Defense Pass Yards Allowed/Game", value=0.0)
+        def_tds = st.number_input("Defense Pass TDs Allowed/Game", value=0.0)
+
+        if st.button("Simulate QB Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_tds = (tds + def_tds) / 2
+            adj_ypg, adj_tds = apply_defense_adjustments(avg_ypg, avg_tds, tier)
+
+            st.session_state.nfl_temp_props = []  # auto clear
+
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            td_prob = logistic_prob(adj_tds, td_line, scale=0.5)
+            under_td_prob = round(100.0 - td_prob, 2)
+
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Pass Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Pass Yds → {alt_prob}%")
+            st.success(f"📉 Under {td_line} Pass TDs → {under_td_prob}%")
+
+            add_temp_play(name, f"Over {std_line} Pass Yds", std_prob, over_std, "QB")
+            add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
+            add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
+
+    if position == "Wide Receiver":
+        st.header("🎯 Wide Receiver Inputs")
+        name = st.text_input("Wide Receiver Name", value="")
+        opp = st.text_input("Opponent Team", value="")
+        std_line = st.number_input("Standard Receiving Yards Line", value=0.0)
+        over_std = st.number_input("Odds Over (Standard)", value=0.0)
+        under_std = st.number_input("Odds Under (Standard)", value=0.0)
+        alt_line = st.number_input("Alt Over Line", value=0.0)
+        alt_odds = st.number_input("Odds for Alt Over", value=0.0)
+        rec_line = st.number_input("Receptions Line", value=0.0)
+        rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
+        rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
+        ypg = st.number_input("WR Yards/Game", value=0.0)
+        rpg = st.number_input("WR Receptions/Game", value=0.0)
+        def_yds = st.number_input("Defense WR Yards Allowed/Game", value=0.0)
+        def_rec = st.number_input("Defense WR Receptions Allowed/Game", value=0.0)
+
+        if st.button("Simulate WR Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_rpg = (rpg + def_rec) / 2
+            adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+
+            st.session_state.nfl_temp_props = []  # auto clear
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
+
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Rec Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
+
+            add_temp_play(name, f"Over {std_line} Rec Yds", std_prob, over_std, "WR")
+            add_temp_play(name, f"Under {std_line} Rec Yds", round(100-std_prob,2), under_std, "WR")
+            add_temp_play(name, f"Over {alt_line} Alt Rec Yds", alt_prob, alt_odds, "WR")
+            add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "WR")
+            add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "WR")
+
+    if position == "Running Back":
+        st.header("🎯 Running Back Inputs")
+        name = st.text_input("Running Back Name", value="")
+        opp = st.text_input("Opponent Team", value="")
+        std_line = st.number_input("Standard Rushing Yards Line", value=0.0)
+        over_std = st.number_input("Odds Over (Standard)", value=0.0)
+        under_std = st.number_input("Odds Under (Standard)", value=0.0)
+        alt_line = st.number_input("Alt Over Line", value=0.0)
+        alt_odds = st.number_input("Odds for Alt Over", value=0.0)
+        rec_line = st.number_input("Receptions Line", value=0.0)
+        rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
+        rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
+        ypg = st.number_input("RB Yards/Game", value=0.0)
+        rpg = st.number_input("RB Receptions/Game", value=0.0)
+        def_yds = st.number_input("Defense Rush Yards Allowed/Game", value=0.0)
+        def_rec = st.number_input("Defense RB Receptions Allowed/Game", value=0.0)
+
+        if st.button("Simulate RB Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_rpg = (rpg + def_rec) / 2
+            adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+
+            st.session_state.nfl_temp_props = []  # auto clear
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
+
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Rush Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Rush Yds → {alt_prob}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
+
+            add_temp_play(name, f"Over {std_line} Rush Yds", std_prob, over_std, "RB")
+            add_temp_play(name, f"Under {std_line} Rush Yds", round(100-std_prob,2), under_std, "RB")
+            add_temp_play(name, f"Over {alt_line} Alt Rush Yds", alt_prob, alt_odds, "RB")
+            add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "RB")
+            add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "RB")
+
+    # Render lists + global add buttons
+    render_temp_save_controls()
+    render_board()
+
+
+# =====================================================
+# ============ MODULE: ATS & Totals (v3.3) ============
+# (Condensed UI; preserves math; adds global parlay add)
+# =====================================================
+def ats_totals_app():
+    st.header("📊 Moneyball Phil — ATS & Totals (v3.3)")
+
+    # state init
+    def init_state():
+        defaults = {
+            "parlay_slip": [], "last_sport": None,
+            "home": "", "away": "",
+            "home_pf": 0.0, "home_pa": 0.0,
+            "away_pf": 0.0, "away_pa": 0.0,
+            "spread_line_home": 0.0,
+            "spread_odds_home": -110.0, "spread_odds_away": -110.0,
+            "total_line": 0.0, "over_odds": -110.0, "under_odds": -110.0,
+            "stake": 0.0,
+            "selected_bet": None, "selected": None,
+            "results_df": None, "proj_total": None, "proj_margin": None,
+            "proj_home_pts": None, "proj_away_pts": None,
+            "auto_vol_used": None, "auto_vol_mode": False,
+        }
+        for k, v in defaults.items():
+            if k not in st.session_state:
+                st.session_state[k] = v
+    init_state()
+
+    def american_to_implied(odds: float) -> float:
+        return (100 / (odds + 100)) if odds > 0 else (abs(odds) / (abs(odds) + 100))
+
+    def calculate_ev_pct(true_prob_pct: float, odds: float):
+        implied = american_to_implied(odds) * 100
+        return (true_prob_pct - implied), implied
+
+    def tier_by_true_prob(true_prob_pct: float):
+        if true_prob_pct >= 80: return "Elite", "#16a34a"
+        if true_prob_pct >= 65: return "Strong", "#2563eb"
+        if true_prob_pct >= 50: return "Moderate", "#f59e0b"
+        return "Risky", "#dc2626"
+
+    def _std_norm_cdf(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    def get_sport_sigmas(sport: str):
+        if sport == "MLB": return 3.5, 3.0
+        if sport == "NFL": return 10.0, 9.0
+        if sport == "NCAA Football": return 12.0, 10.0
+        if sport == "NBA": return 15.0, 12.0
+        if sport == "NCAA Basketball": return 18.0, 14.0
+        return 12.0, 10.0
+
+    def suggested_volatility(sport: str) -> float:
+        mapping = {"NFL": 10.0, "NCAA Football": 12.0, "NBA": 12.0, "NCAA Basketball": 15.0, "MLB": 8.0}
+        return mapping.get(sport, 10.0)
+
+    def project_scores_base(sport: str, H_pf: float, H_pa: float, A_pf: float, A_pa: float):
+        home_pts = (H_pf + A_pa) / 2.0
+        away_pts = (A_pf + H_pa) / 2.0
+        return home_pts, away_pts
+
+    sport = st.selectbox("Select Sport", ["MLB", "NFL", "NBA", "NCAA Football", "NCAA Basketball"])
+
+    col_inputs, col_results = st.columns([1,2])
+    with col_inputs:
+        with st.form("inputs_form_ats"):
+            n1, n2 = st.columns(2)
+            with n1: st.session_state.home = st.text_input("Home Team", value=st.session_state.home)
+            with n2: st.session_state.away = st.text_input("Away Team", value=st.session_state.away)
+            h_col, a_col = st.columns(2)
+            with h_col:
+                st.session_state.home_pf = st.number_input("Home: Avg Scored", step=0.01, format="%.2f", value=float(st.session_state.home_pf))
+                st.session_state.home_pa = st.number_input("Home: Avg Allowed", step=0.01, format="%.2f", value=float(st.session_state.home_pa))
+            with a_col:
+                st.session_state.away_pf = st.number_input("Away: Avg Scored", step=0.01, format="%.2f", value=float(st.session_state.away_pf))
+                st.session_state.away_pa = st.number_input("Away: Avg Allowed", step=0.01, format="%.2f", value=float(st.session_state.away_pa))
+            s1, s2 = st.columns(2)
+            with s1:
+                st.session_state.spread_line_home = st.number_input("Home Spread (enter negative if favorite)", step=0.01, format="%.2f", value=float(st.session_state.spread_line_home))
+            with s2:
+                st.caption(f"Away Spread (auto): {(-st.session_state.spread_line_home):+.2f}")
+            so1, so2 = st.columns(2)
+            with so1:
+                st.session_state.spread_odds_home = st.number_input("Home Spread Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.spread_odds_home))
+            with so2:
+                st.session_state.spread_odds_away = st.number_input("Away Spread Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.spread_odds_away))
+            t_row1, t_row2 = st.columns(2)
+            with t_row1:
+                st.session_state.total_line = st.number_input("Total Line", step=0.01, format="%.2f", value=float(st.session_state.total_line))
+                st.session_state.over_odds = st.number_input("Over Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.over_odds))
+            with t_row2:
+                st.session_state.stake = st.number_input("Stake ($)", min_value=0.0, step=1.0, format="%.2f", value=float(st.session_state.stake))
+                st.session_state.under_odds = st.number_input("Under Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.under_odds))
+            auto_volatility = st.checkbox("Auto volatility by sport", value=True)
+            variance_pct_manual = st.number_input("Volatility tweak (±% SD)", value=0.0, step=5.0, format="%.0f")
+            run_projection = st.form_submit_button("🔮 Run Projection")
+
+    with col_results:
+        if run_projection:
+            S = st.session_state
+            home_pts, away_pts = project_scores_base(sport, S.home_pf, S.home_pa, S.away_pf, S.away_pa)
+            auto_vol_used = suggested_volatility(sport) if auto_volatility else float(variance_pct_manual)
+            sd_total, sd_margin = get_sport_sigmas(sport)
+            sd_total *= (1 + auto_vol_used/100.0); sd_margin *= (1 + auto_vol_used/100.0)
+            proj_total = home_pts + away_pts
+            proj_margin = home_pts - away_pts
+            rows = []
+
+            if S.spread_line_home < 0:
+                z_spread_home = (proj_margin - abs(S.spread_line_home)) / sd_margin if sd_margin > 0 else 0.0
+                # approx via std normal CDF
+                true_home = _std_norm_cdf(z_spread_home) * 100.0
+            else:
+                z_spread_home = (proj_margin + abs(S.spread_line_home)) / sd_margin if sd_margin > 0 else 0.0
+                true_home = _std_norm_cdf(z_spread_home) * 100.0
+
+            ev_home, impl_home = calculate_ev_pct(true_home, S.spread_odds_home)
+            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, true_home, impl_home, ev_home])
+
+            true_away = 100.0 - true_home
+            ev_away, impl_away = calculate_ev_pct(true_away, S.spread_odds_away)
+            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, true_away, impl_away, ev_away])
+
+            z_total_over = (proj_total - S.total_line) / sd_total if sd_total > 0 else 0.0
+            true_over = _std_norm_cdf(z_total_over) * 100.0
+            ev_over, impl_over = calculate_ev_pct(true_over, S.over_odds)
+            rows.append([f"Over {S.total_line:.2f}", S.over_odds, true_over, impl_over, ev_over])
+
+            true_under = max(0.0, 100.0 - true_over)
+            ev_under, impl_under = calculate_ev_pct(true_under, S.under_odds)
+            rows.append([f"Under {S.total_line:.2f}", S.under_odds, true_under, impl_under, ev_under])
+
+            df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
+            st.session_state.results_df = df
+            st.session_state.proj_total = proj_total
+            st.session_state.proj_margin = proj_margin
+            st.session_state.auto_vol_used = auto_vol_used
+
+        if st.session_state.get("results_df") is not None:
+            df = st.session_state.results_df
+            st.subheader("Bet Results")
+            st.dataframe(df, use_container_width=True)
+            if st.session_state.selected_bet is None and len(df) > 0:
+                st.session_state.selected_bet = df["Bet Type"].iloc[0]
+            choice = st.selectbox("Select a bet:", options=list(df["Bet Type"]), key="selected_bet")
+            selected = df[df["Bet Type"] == st.session_state.selected_bet].iloc[0]
+            # Add to Global
+            colA, colB = st.columns(2)
+            with colA:
+                if st.button("🌍 Add Selected to Global Parlay"):
+                    add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"])/100.0)
+                    st.success("Added to Global Parlay")
+            with colB:
+                st.caption(f"True {selected['True %']:.1f}% | Odds {int(selected['Odds'])}")
+
+# =====================================================
+# ============ MODULE: MLB HIT SIMULATOR ===============
+# (Trimmed UI; preserves math; adds global parlay add)
+# =====================================================
+def mlb_hits_app():
+    st.header("⚾ Moneyball Phil: Hit Probability Simulator")
+
+    if "saved_players" not in st.session_state:
+        st.session_state.saved_players = []
+    if "last_player_result" not in st.session_state:
+        st.session_state.last_player_result = None
+    if "id_counter" not in st.session_state:
+        st.session_state.id_counter = 1
+
+    def next_id():
+        st.session_state.id_counter += 1
+        return st.session_state.id_counter
+
+    def _to_float(txt: str, *, allow_empty=False, default=0.0):
+        s = str(txt).strip()
+        if allow_empty and s == "":
+            return default
+        return float(s)
+
+    def american_to_implied_from_text(txt: str) -> float:
+        s = str(txt).strip(); am = float(s.replace("+", ""))
+        return abs(am) / (abs(am) + 100.0) if am < 0 else 100.0 / (am + 100.0)
+
+    def calculate_weighted_avg(season, last7, split_, hand, pitcher):
+        return round(0.2 * season + 0.3 * last7 + 0.2 * split_ + 0.2 * hand + 0.1 * pitcher, 4)
+
+    def binomial_hit_probability(avg, ab=4):
+        return round(1 - (1 - avg) ** ab, 4)
+
+    st.subheader("📥 Player Stat Entry")
+    with st.form("player_input"):
+        name = st.text_input("Player Name", key="name")
+        season_avg_txt  = st.text_input("Season AVG", placeholder="0.285", key="season_avg")
+        last7_avg_txt   = st.text_input("Last 7 Days AVG", placeholder="0.310", key="last7_avg")
+        split_avg_txt   = st.text_input("Split AVG (Home/Away)", placeholder="0.295", key="split_avg")
+        hand_avg_txt    = st.text_input("AVG vs Handedness", placeholder="0.305", key="hand_avg")
+        pitcher_avg_txt = st.text_input("AVG vs Pitcher", placeholder="0.270", key="pitcher_avg")
+        pitcher_whip_txt = st.text_input("Pitcher WHIP", placeholder="1.20", key="pitcher_whip")
+        batting_order = st.selectbox("Batting Order Position", list(range(1, 10)), key="batting_order")
+        odds_txt = st.text_input("Sportsbook Odds (American)", placeholder="-115", key="odds_txt")
+        submit = st.form_submit_button("Simulate Player")
+
+    if submit:
+        try:
+            season_avg  = _to_float(season_avg_txt)
+            last7_avg   = _to_float(last7_avg_txt)
+            split_avg   = _to_float(split_avg_txt)
+            hand_avg    = _to_float(hand_avg_txt)
+            pitcher_avg = _to_float(pitcher_avg_txt)
+            odds_implied = american_to_implied_from_text(odds_txt)
+            pitcher_whip = _to_float(pitcher_whip_txt)
+        except Exception as e:
+            st.error(f"Input error: {e}")
+        else:
+            weighted_avg = calculate_weighted_avg(season_avg, last7_avg, split_avg, hand_avg, pitcher_avg)
+            adjustment = 0.020 if pitcher_whip >= 1.40 else (-0.020 if pitcher_whip < 1.10 else 0.000)
+            adj_weighted_avg = round(max(0.0, min(1.0, weighted_avg + adjustment)), 4)
+            ab_lookup = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.0, 7: 3.8, 8: 3.6, 9: 3.4}
+            est_ab = ab_lookup.get(batting_order, 4.0)
+            true_prob = binomial_hit_probability(adj_weighted_avg, ab=round(est_ab))
+            implied_prob = round(odds_implied, 4)
+            ev = round((true_prob - implied_prob) * 100.0, 1)
+            st.session_state.last_player_result = {
+                "id": next_id(), "name": name or "Player",
+                "true_prob": true_prob, "implied_prob": implied_prob,
+                "ev": ev, "odds_txt": odds_txt.strip()
+            }
+
+    if st.session_state.last_player_result:
+        r = st.session_state.last_player_result
+        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.1f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']}")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            if st.button("💾 Save to Board (Hit)"):
+                st.session_state.saved_players.append(r); st.success("Saved to board.")
+        with c2:
+            if st.button("🌍 Add to Global Parlay (Hit)"):
+                try:
+                    odds = float(r["odds_txt"].replace("+",""))
+                    add_to_global_parlay("MLB Hit", f"{r['name']} — 1+ Hit", odds, r["true_prob"])
+                    st.success("Added to Global Parlay")
+                except Exception:
+                    st.warning("Couldn't parse odds for global parlay.")
+
+    st.markdown("---")
+    st.header("📌 Saved Player Board")
+    if not st.session_state.saved_players:
+        st.info("No saved players yet.")
+    else:
+        df = pd.DataFrame(st.session_state.saved_players)
+        st.dataframe(df, use_container_width=True)
+
+# =====================================================
+# ======= MODULE: Pitcher ER & K Simulator ============
+# (Preserves logic; adds global parlay buttons)
+# =====================================================
+def pitcher_app():
+    st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
+
+    import math as _m
+    from scipy.stats import poisson
+
+    if "parlay_legs" not in st.session_state: st.session_state.parlay_legs = []
+    if "player_board" not in st.session_state: st.session_state.player_board = []
+    if "er_result" not in st.session_state: st.session_state.er_result = None
+    if "k_result" not in st.session_state: st.session_state.k_result = None
+
+    PA_PER_INNING = 4.3
+    def american_to_prob_local(odds: float) -> float:
+        if odds >= 0: return 100.0 / (odds + 100.0)
+        return abs(odds) / (abs(odds) + 100.0)
+
+    def expected_bf(expected_ip, pa_per_inning=PA_PER_INNING):
+        return max(1, int(round(expected_ip * pa_per_inning)))
+
+    def parse_pct(s: str) -> float:
+        x = float(str(s).strip())
+        if x > 1.0: x = x / 100.0
+        if x < 0: raise ValueError("Percentage cannot be negative.")
+        return x
+
+    def estimate_pK(pitcher_K_rate, opp_K_rate_vs_hand, park_factor=1.0, ump_factor=1.0, recent_factor=1.0):
+        base = 0.6*pitcher_K_rate + 0.4*opp_K_rate_vs_hand
+        adj = base * park_factor * ump_factor * recent_factor
+        return max(0.10, min(0.45, adj))
+
+    def binom_pmf(n, k, p):
+        if k < 0 or k > n: return 0.0
+        return _m.exp(_m.lgamma(n+1) - _m.lgamma(k+1) - _m.lgamma(n-k+1) + k*_m.log(max(p,1e-12)) + (n-k)*_m.log(max(1-p,1e-12)))
+    def binom_cdf(n, k, p):
+        k = int(k); return sum(binom_pmf(n, i, p) for i in range(0, k+1))
+
+    def k_over_under_probs(line_ks, n_bf, pK):
+        if abs(line_ks - round(line_ks)) < 1e-9:
+            k_under = int(line_ks) - 1; k_over = int(line_ks)
+        else:
+            k_under = _m.floor(line_ks); k_over = k_under + 1
+        p_under = binom_cdf(n_bf, k_under, pK)
+        p_over  = 1.0 - binom_cdf(n_bf, k_over-1, pK)
+        return p_over, p_under
+
+    tabs = st.tabs(["Earned Runs (U2.5)", "Strikeouts (K)"])
+
+    with tabs[0]:
+        with st.form("er_form_glob"):
+            c1, c2 = st.columns(2)
+            with c1:
+                er_pitcher = st.text_input("Pitcher Name", key="er_pitcher")
+                er_era = st.text_input("ERA", key="er_era")
+                er_total_ip = st.text_input("Total Innings Pitched", key="er_total_ip")
+                er_games = st.number_input("Games Started", value=15, step=1, key="er_games")
+                er_last3 = st.text_input("Last 3 Game IP (e.g. 5.2,6.1,5.0)", key="er_last3")
+            with c2:
+                er_oppops = st.text_input("Opponent OPS", key="er_oppops")
+                er_lgops = st.text_input("League Average OPS", key="er_lgops")
+                er_ballpark = st.selectbox("Ballpark Factor", ["Neutral","Pitcher-Friendly","Hitter-Friendly"], key="er_ballpark")
+                er_under_odds = st.text_input("Sportsbook Odds (U2.5 ER)", key="er_under_odds")
+            simulate_er = st.form_submit_button("▶ Simulate Player")
+
+        if simulate_er:
+            try:
+                pitcher_name   = er_pitcher or "Pitcher"
+                era            = float(er_era)
+                total_ip       = float(er_total_ip)
+                games_started  = int(er_games)
+                last_3_ip      = er_last3
+                opponent_ops   = float(er_oppops)
+                league_avg_ops = float(er_lgops)
+                ballpark       = er_ballpark
+                under_odds     = float(str(er_under_odds).replace("+",""))
+                ip_values = [float(i.strip()) for i in last_3_ip.split(",") if i.strip()]
+                trend_ip  = sum(ip_values) / len(ip_values)
+            except Exception:
+                st.error("Enter valid numerics for ERA/IP/OPS and odds.")
+                st.stop()
+
+            base_ip = total_ip / max(1, games_started)
+            park_adj = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
+            expected_ip = round(((base_ip + trend_ip) / 2) + park_adj, 2)
+            adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
+            lambda_er = round(adjusted_era * (expected_ip / 9), 3)
+            p0 = poisson.pmf(0, lambda_er); p1 = poisson.pmf(1, lambda_er); p2 = poisson.pmf(2, lambda_er)
+            true_prob = round(p0 + p1 + p2, 4)
+            implied_prob = american_to_prob_local(under_odds)
+            st.session_state.er_result = {
+                "pitcher": pitcher_name, "expected_ip": expected_ip,
+                "true_prob": true_prob, "odds": under_odds
+            }
+
+        er = st.session_state.er_result
+        if er:
+            st.success(f"{er['pitcher']} — U2.5 ER True {er['true_prob']*100:.2f}% | Odds {int(er['odds'])}")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("💾 Save to Board: U2.5 ER"):
+                    st.session_state.player_board.append({"Market":"ER","Description":f"{er['pitcher']} U2.5 ER","Odds":er["odds"],"True Prob":er["true_prob"]}); st.success("Saved.")
+            with c2:
+                if st.button("🌍 Add to Global Parlay: U2.5 ER"):
+                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"])
+                    st.success("Added to Global Parlay")
+
+    with tabs[1]:
+        with st.form("k_form_glob"):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                k_pitcher_name = st.text_input("Pitcher Name (K)", key="k_pitcher_name")
+                k_total_ip = st.text_input("Total Innings Pitched (season)", key="k_total_ip")
+                k_games_started = st.number_input("Games Started (season)", value=17, step=1, key="k_games_started")
+                k_last3 = st.text_input("Last 3 Game IP (e.g., 5.2,6.1,5.0)", key="k_last3")
+            with c2:
+                k_pct = st.text_input("Pitcher K% (24.3 or 0.243)", key="k_pct")
+                k_opp_pct = st.text_input("Opponent K% vs Hand (23.0 or 0.23)", key="k_opp_pct")
+                k_line = st.text_input("K Line (e.g., 5.5)", key="k_line")
+            with c3:
+                k_odds_over = st.text_input("Over Odds (American)", key="k_odds_over")
+                k_odds_under = st.text_input("Under Odds (American)", key="k_odds_under")
+                k_park = st.text_input("Park Factor (K)", value="1.00", key="k_park")
+                k_ump = st.text_input("Ump Factor (K)", value="1.00", key="k_ump")
+                k_recent = st.text_input("Recent Form Factor", value="1.00", key="k_recent")
+            calc_k = st.form_submit_button("▶ Calculate Strikeouts")
+
+        if calc_k:
+            try:
+                k_pitcher = k_pitcher_name or "Pitcher"
+                total_ip_k = float(k_total_ip); games_started_k = int(k_games_started)
+                last_3_ip_k = k_last3
+                pitcher_k_pct = parse_pct(k_pct); opp_k_vs_hand = parse_pct(k_opp_pct)
+                k_line_v = float(k_line)
+                odds_over_f = float(str(k_odds_over).replace("+",""))
+                odds_under_f = float(str(k_odds_under).replace("+",""))
+                park_factor = float(k_park); ump_factor = float(k_ump); recent_factor = float(k_recent)
+                ip_values_k = [float(i.strip()) for i in last_3_ip_k.split(",") if i.strip()]
+                trend_ip_k  = sum(ip_values_k) / len(ip_values_k)
+            except Exception as e:
+                st.error(f"Bad input: {e}")
+                st.stop()
+
+            base_ip_k = total_ip_k / max(1, games_started_k)
+            expected_ip_k = round(((base_ip_k + trend_ip_k) / 2), 2)
+            pK   = estimate_pK(pitcher_k_pct, opp_k_vs_hand, park_factor, ump_factor, recent_factor)
+            n_bf = expected_bf(expected_ip_k)
+            p_over, p_under = k_over_under_probs(k_line_v, n_bf, pK)
+            st.session_state.k_result = {
+                "pitcher": k_pitcher, "k_line": k_line_v,
+                "p_over": p_over, "p_under": p_under,
+                "odds_over": odds_over_f, "odds_under": odds_under_f
+            }
+
+        kr = st.session_state.k_result
+        if kr:
+            st.success(f"{kr['pitcher']} — K {kr['k_line']}  |  Over True {kr['p_over']*100:.2f}%  /  Under True {kr['p_under']*100:.2f}%")
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("🌍 Add to Global Parlay: Over K"):
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"])
+                    st.success("Added Over leg.")
+            with c2:
+                if st.button("🌍 Add to Global Parlay: Under K"):
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"])
+                    st.success("Added Under leg.")
+
+# =====================================================
+# ================ MODULE: NBA Simulator ==============
+# (Preserves logic; adds global parlay add)
+# =====================================================
+def nba_app():
+    st.header("🏀 MoneyBall Phil — Basketball Simulator")
+
+    if "nba_board" not in st.session_state:
+        st.session_state.nba_board = []
+    if "nba_saved_plays" not in st.session_state:
+        st.session_state.nba_saved_plays = []
+    st.session_state.setdefault("last_result_nba", None)
+
+    def american_to_prob_text(odds_text):
+        try:
+            o = int(odds_text)
+            return abs(o)/(abs(o)+100) if o < 0 else 100/(o+100)
+        except:
+            return None
+
+    def defense_logit_shift_continuous(rank:int) -> float:
+        slope = 0.25 / 14.5
+        return max(-0.25, min(0.25, slope * (rank - 15.5)))
+
+    def true_prob_from_line(stat_type:str, combined_avg:float, line:float, def_rank:int) -> float:
+        if line <= 0: return 0.10
+        scale = 6.5 if stat_type == "Points Only" else 8.0
+        diff = (combined_avg - line) / scale
+        logit = diff + defense_logit_shift_continuous(def_rank)
+        p = 1.0 / (1.0 + math.exp(-logit))
+        return max(0.10, min(0.90, round(p, 4)))
+
+    st.subheader("Player Input")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        player_name = st.text_input("Player", key="nba_player_name")
+        team = st.text_input("Team", key="nba_team")
+    with c2:
+        position = st.selectbox("Position", ["PG","SG","SF","PF","C"], key="nba_position")
+        opponent = st.text_input("Opponent", key="nba_opponent")
+    with c3:
+        usage = st.number_input("Usage %", 0.0, 100.0, step=0.1, key="nba_usage")
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        sportsbook_line = st.number_input("Line (Pts / PRA)", min_value=0.0, key="nba_line")
+        odds_over = st.text_input("Over Odds", key="nba_odds_over")
+    with c5:
+        odds_under = st.text_input("Under Odds", key="nba_odds_under")
+        recent_avg = st.number_input("Recent Avg (Pts or PRA)", min_value=0.0, key="nba_recent_avg")
+    with c6:
+        alt_line = st.number_input("Alt Line (Over only)", min_value=0.0, key="nba_alt_line")
+        alt_odds = st.text_input("Alt Over Odds", key="nba_alt_odds")
+
+    c7, c8, c9 = st.columns(3)
+    with c7:
+        stat_type = st.radio("Stat Type", ["PRA","Points Only"], key="nba_stat_type")
+        points = st.number_input("Points", min_value=0.0, key="nba_points")
+    with c8:
+        rebounds = st.number_input("Rebounds", min_value=0.0, key="nba_rebounds")
+        assists  = st.number_input("Assists",  min_value=0.0, key="nba_assists")
+    with c9:
+        defense_rank = st.number_input("DEF Rank vs Pos (1–30)", 1, 30, key="nba_defense_rank")
+
+    if st.button("Simulate (NBA)"):
+        base = (points + rebounds + assists) if stat_type == "PRA" else points
+        combined_avg = (base + recent_avg)/2.0 if recent_avg > 0 else base
+        hit_chance = true_prob_from_line(stat_type, combined_avg, sportsbook_line, defense_rank)
+        implied_over  = american_to_prob_text(odds_over)
+        implied_under = american_to_prob_text(odds_under)
+        row = {
+            "Player": player_name, "Type": stat_type, "Line": sportsbook_line,
+            "True": hit_chance, "OverOdds": odds_over, "UnderOdds": odds_under
+        }
+        st.session_state.last_result_nba = row
+        st.session_state.nba_board.append({
+            "Player": player_name, "Type": stat_type, "Line": sportsbook_line,
+            "True %": f"{hit_chance*100:.1f}%"
+        })
+        st.success(f"{player_name} — True {hit_chance*100:.2f}%")
+
+    r = st.session_state.get("last_result_nba")
+    if r:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("💾 Save Play (NBA)"):
+                st.session_state.nba_saved_plays.append(r); st.success("Saved.")
+        with col2:
+            if st.button("🌍 Add Over to Global Parlay (NBA)"):
+                try:
+                    odds = float(str(r["OverOdds"]).replace("+",""))
+                    add_to_global_parlay("NBA", f"{r['Player']} Over {r['Line']} ({r['Type']})", odds, r["True"])
+                    st.success("Added Over to Global")
+                except Exception:
+                    st.warning("Could not parse Over odds.")
+        with col3:
+            if st.button("🌍 Add Under to Global Parlay (NBA)"):
+                try:
+                    odds = float(str(r["UnderOdds"]).replace("+",""))
+                    add_to_global_parlay("NBA", f"{r['Player']} Under {r['Line']} ({r['Type']})", odds, 1.0 - float(r["True"]))
+                    st.success("Added Under to Global")
+                except Exception:
+                    st.warning("Could not parse Under odds.")
+
+    st.markdown("---")
+    st.header("📈 Top Player Board")
+    if st.session_state.nba_board:
+        df = pd.DataFrame(st.session_state.nba_board)
+        st.dataframe(df, use_container_width=True)
+
+# =====================================================
+# ================= MODULE: Soccer EV ==================
+# (Preserves math; adds global parlay add from saved bets)
+# =====================================================
+def soccer_app():
+    st.header("⚽ Moneyball Phil — Soccer EV (O1.5 / O2.5 / BTTS)")
+
+    import numpy as np
+
+    # init
+    st.session_state.setdefault("matches", [])
+    st.session_state.setdefault("saved_bets", [])
+    st.session_state.setdefault("id_counter_soc", 1)
+
+    def next_id():
+        st.session_state["id_counter_soc"] += 1
+        return st.session_state["id_counter_soc"]
+
+    def american_to_decimal_local(odds: float) -> float:
+        return 1.0 + (odds / 100.0) if odds > 0 else 1.0 + (100.0 / abs(odds))
+
+    def parse_odds(odds_input: str):
+        s = str(odds_input).strip()
+        if s.startswith(('+','-')):
+            am = float(s); dec = american_to_decimal_local(am)
+            return 1.0/dec, dec
+        dec = float(s); 
+        if dec <= 1.0: raise ValueError("Decimal odds must be > 1.0")
+        return 1.0/dec, dec
+
+    def poisson_pmf(k: int, lam: float) -> float:
+        if not np.isfinite(lam) or lam < 0: return np.nan
+        try:
+            return math.exp(-lam) * lam**k / math.factorial(k)
+        except OverflowError:
+            return np.nan
+
+    def safe_goal_matrix(lam_home: float, lam_away: float, max_goals: int = 10):
+        for lam in [lam_home, lam_away]:
+            if not np.isfinite(lam): raise ValueError("λ not finite")
+            if lam < 0: raise ValueError("λ negative")
+        lam_home = float(np.clip(lam_home, 0.0, 4.0))
+        lam_away = float(np.clip(lam_away, 0.0, 4.0))
+        h = np.array([poisson_pmf(i, lam_home) for i in range(max_goals+1)], dtype=float)
+        a = np.array([poisson_pmf(j, lam_away) for j in range(max_goals+1)], dtype=float)
+        M = np.outer(h, a); total = M.sum()
+        if not np.isfinite(total) or total <= 0: raise ValueError("Bad distribution")
+        return M/total
+
+    def market_probs_from_matrix(M):
+        over15 = over25 = btts = 0.0
+        H, A = M.shape
+        for i in range(H):
+            for j in range(A):
+                p = M[i,j]
+                if i + j >= 2: over15 += p
+                if i + j >= 3: over25 += p
+                if i >= 1 and j >= 1: btts += p
+        return {"O1.5": over15, "O2.5": over25, "BTTS": btts}
+
+    # inputs
+    st.subheader("Add / Compute a Match")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        home_team = st.text_input("Home Team", key="s_home")
+        home_xg_total = st.text_input("Home xG (SEASON TOTAL)", key="s_hxg")
+        home_matches = st.text_input("Matches Played (SEASON TOTAL)", key="s_hm")
+    with c2:
+        away_team = st.text_input("Away Team", key="s_away")
+        away_xg_total = st.text_input("Away xG (SEASON TOTAL)", key="s_axg")
+        away_matches = st.text_input("Away Matches (SEASON TOTAL)", key="s_am")
+    with c3:
+        home_xga_total = st.text_input("Home xGA (SEASON TOTAL)", key="s_hxga")
+        away_xga_total = st.text_input("Away xGA (SEASON TOTAL)", key="s_axga")
+        _ = st.write("")
+
+    # per-match
+    def per_match(total_s, games_s):
+        try:
+            total = float(str(total_s).strip()); games = float(str(games_s).strip())
+            if games <= 0: return None
+            return total / games
+        except: return None
+
+    h_for = per_match(home_xg_total, home_matches)
+    h_against = per_match(home_xga_total, home_matches)
+    a_for = per_match(away_xg_total, away_matches)
+    a_against = per_match(away_xga_total, away_matches)
+
+    st.caption(f"Home per-match: xG {h_for or 0:.3f}, xGA {h_against or 0:.3f} | Away per-match: xG {a_for or 0:.3f}, xGA {a_against or 0:.3f}")
+
+    oc1, oc2, oc3 = st.columns(3)
+    with oc1:
+        odds_o15 = st.text_input("Over 1.5 Odds", key="s_o15")
+    with oc2:
+        odds_o25 = st.text_input("Over 2.5 Odds", key="s_o25")
+    with oc3:
+        odds_btts = st.text_input("BTTS Odds", key="s_btts")
+
+    cbtn1, cbtn2 = st.columns([1,1])
+    compute = cbtn1.button("Compute Only")
+    compute_save = cbtn2.button("Compute & Save Match")
+
+    if compute or compute_save:
+        try:
+            DEF_FACTOR = 1.2
+            lam_home = (float(h_for) * float(a_against)) / DEF_FACTOR
+            lam_away = (float(a_for) * float(h_against)) / DEF_FACTOR
+            M = safe_goal_matrix(lam_home, lam_away, max_goals=10)
+            probs = market_probs_from_matrix(M)
+            imp15, dec15 = parse_odds(odds_o15)
+            imp25, dec25 = parse_odds(odds_o25)
+            impBT, decBT = parse_odds(odds_btts)
+        except Exception as e:
+            st.error(f"Compute error: {e}")
+        else:
+            st.success(f"Results for {home_team} vs {away_team}")
+            for key, label, imp, dec, odds_str in [
+                ("O1.5","Over 1.5", imp15, dec15, odds_o15),
+                ("O2.5","Over 2.5", imp25, dec25, odds_o25),
+                ("BTTS","BTTS",     impBT, decBT, odds_btts),
+            ]:
+                true_p = probs[key]
+                ev = (true_p * (dec-1.0)) - (1.0 - true_p)
+                st.write(f"{label}: True {true_p*100:.2f}% | EV {ev*100:.2f}% | Odds {odds_str}")
+            if compute_save:
+                rec = {
+                    "id": next_id(), "label": f"{home_team} vs {away_team}",
+                    "probs": probs,
+                    "odds": {"O1.5": odds_o15, "O2.5": odds_o25, "BTTS": odds_btts}
+                }
+                st.session_state.matches.append(rec); st.success("Match saved.")
+
+    st.markdown("---")
+    st.subheader("Saved Bets")
+    # Render each saved match as rows with add-to-global buttons
+    # For simplicity, each click computes implied from odds string fresh.
+    for match in list(st.session_state.matches):
+        st.markdown(f"**{match['label']}**")
+        for key, label in [("O1.5","Over 1.5"), ("O2.5","Over 2.5"), ("BTTS","BTTS")]:
+            row = st.columns([1.4, 1.2, 1.2, 1.3])
+            true_p = float(match["probs"][key])
+            odds_str = match["odds"][key]
+            odds_val = None
+            try:
+                if str(odds_str).strip().startswith(('+','-')):
+                    odds_val = float(str(odds_str).replace("+",""))
+                else:
+                    dec = float(odds_str); odds_val = decimal_to_american(dec)
+            except Exception:
+                pass
+            row[0].write(label)
+            row[1].write(f"True: {true_p*100:.2f}%")
+            row[2].write(f"Odds: {odds_str}")
+            with row[3]:
+                if odds_val is not None and st.button("🌍 Add", key=f"add_soc_{match['id']}_{key}"):
+                    add_to_global_parlay("Soccer", f"{match['label']} — {label}", odds_val, true_p)
+                    st.success("Added to Global Parlay")
+
+# =====================================================
+# ================== Router / Layout ==================
+# =====================================================
+with st.sidebar:
+    st.header("Navigation")
+    page = st.selectbox("Choose App", [
+        "NFL Prop Simulator",
+        "ATS & Totals",
+        "MLB — Hit Simulator",
+        "Pitcher ER & K",
+        "NBA Simulator",
+        "Soccer EV",
+        "🌍 Global Parlay Builder"
+    ])
+
+if page == "NFL Prop Simulator":
+    nfl_app()
+elif page == "ATS & Totals":
+    ats_totals_app()
+elif page == "MLB — Hit Simulator":
+    mlb_hits_app()
+elif page == "Pitcher ER & K":
+    pitcher_app()
+elif page == "NBA Simulator":
+    nba_app()
+elif page == "Soccer EV":
+    soccer_app()
+else:
+    render_global_parlay_builder()
+
+st.markdown('</div>', unsafe_allow_html=True)
