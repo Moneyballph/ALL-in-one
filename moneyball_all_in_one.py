@@ -287,7 +287,7 @@ def nfl_app():
     position = st.selectbox("Select Position", ["Quarterback", "Wide Receiver", "Running Back"])
 
     # ---- QB Module ----
-    if position == "Quarterback":
+       if position == "Quarterback":
         st.header("🎯 Quarterback Inputs")
         name = st.text_input("Quarterback Name", value="")
         opp = st.text_input("Opponent Team", value="")
@@ -303,27 +303,29 @@ def nfl_app():
         def_yds = st.number_input("Defense Pass Yards Allowed/Game", value=0.0)
         def_tds = st.number_input("Defense Pass TDs Allowed/Game", value=0.0)
 
-  if st.button("Simulate QB Props"):
-    tier = classify_def_tier(def_yds)
-    avg_ypg = (ypg + def_yds) / 2
-    avg_tds = (tds + def_tds) / 2
-    adj_ypg, adj_tds = apply_defense_adjustments(avg_ypg, avg_tds, tier)
+        # ✅ Correct indentation here
+        if st.button("Simulate QB Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_tds = (tds + def_tds) / 2
+            adj_ypg, adj_tds = apply_defense_adjustments(avg_ypg, avg_tds, tier)
 
-    st.session_state.nfl_temp_props = []  # auto clear
+            st.session_state.nfl_temp_props = []  # auto clear
 
-    std_prob = logistic_prob(adj_ypg, std_line)
-    alt_prob = logistic_prob(adj_ypg, alt_line)
-    td_prob = logistic_prob(adj_tds, td_line, scale=0.5)
-    under_td_prob = round(100.0 - td_prob, 2)
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            td_prob = logistic_prob(adj_tds, td_line, scale=0.5)
+            under_td_prob = round(100.0 - td_prob, 2)
 
-    st.info(f"Opponent Defense Tier: **{tier}**")
-    st.success(f"📈 Over {std_line} Pass Yds → {std_prob:.2f}%")
-    st.success(f"📈 Over {alt_line} Alt Pass Yds → {alt_prob:.2f}%")
-    st.success(f"📉 Under {td_line} Pass TDs → {under_td_prob:.2f}%")
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Pass Yds → {std_prob:.2f}%")
+            st.success(f"📈 Over {alt_line} Alt Pass Yds → {alt_prob:.2f}%")
+            st.success(f"📉 Under {td_line} Pass TDs → {under_td_prob:.2f}%")
 
-    add_temp_play(name, f"Over {std_line} Pass Yds", std_prob, over_std, "QB")
-    add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
-    add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
+            add_temp_play(name, f"Over {std_line} Pass Yds", std_prob, over_std, "QB")
+            add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
+            add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
+
 
 
     # ---- WR Module ----
