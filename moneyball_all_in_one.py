@@ -180,9 +180,6 @@ def render_global_parlay_builder():
 # =====================================================
 # =============== MODULE: NFL Props ===================
 # =====================================================
-import math as _math_nfl
-import uuid
-
 def nfl_app():
     st.header("🏈 Moneyball Phil: NFL Prop Simulator (v2.5)")
 
@@ -208,10 +205,10 @@ def nfl_app():
 
     def logistic_prob(x_value: float, line_value: float, scale: float = 15.0) -> float:
         try:
-            p = 1.0 / (1.0 + _math_nfl.exp(-(x_value - line_value) / scale))
+            p = 1.0 / (1.0 + math.exp(-(x_value - line_value) / scale))
         except OverflowError:
             p = 0.0 if (x_value - line_value) < 0 else 1.0
-        return round(p * 100.0, 2)   # always return percentage now
+        return round(p * 100.0, 2)   # return as %
 
     def classify_def_tier(yds_allowed: float) -> str:
         if yds_allowed < 210: return "🔴 Tough"
@@ -228,7 +225,7 @@ def nfl_app():
             "id": str(uuid.uuid4()),
             "Player": player,
             "Prop": prop,
-            "True Prob": f"{true_prob_pct:.2f}%",   # ✅ formatted as %
+            "True Prob": f"{true_prob_pct:.2f}%",  # format %
             "Odds": odds,
             "Group": group
         })
@@ -244,17 +241,17 @@ def nfl_app():
             with col1:
                 st.markdown(f"**{p['Player']} – {p['Prop']}**  \nTrue: `{p['True Prob']}` | Odds: `{p['Odds']}`")
             with col2:
-                ev = ev_calc(float(p["True Prob"].replace("%",""))/100.0, p["Odds"])
+                ev = ev_calc(float(p["True Prob"].replace('%',''))/100.0, p["Odds"])
                 st.markdown(f"EV: `{ev}%`")
             with col3:
-                tier = get_tier(float(p["True Prob"].replace("%","")))
+                tier = get_tier(float(p["True Prob"].replace('%','')))
                 st.markdown(f"Tier: {tier}")
             with col4:
                 if st.checkbox("Save", key=f"save_{p['id']}"):
                     to_save.append(p)
             with col5:
                 if st.button("🌍 Add", key=f"add_gl_{p['id']}"):
-                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], float(p["True Prob"].replace("%",""))/100.0)
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], float(p["True Prob"].replace('%',''))/100.0)
                     st.success("Added to Global Parlay")
         if st.button("➕ Add Selected to Board"):
             for p in to_save:
@@ -268,19 +265,19 @@ def nfl_app():
         if not st.session_state.nfl_all_props:
             st.info("No saved plays yet.")
             return
-        sorted_props = sorted(st.session_state.nfl_all_props, key=lambda x: float(x["True Prob"].replace("%","")), reverse=True)
+        sorted_props = sorted(st.session_state.nfl_all_props, key=lambda x: float(x["True Prob"].replace('%','')), reverse=True)
         for p in sorted_props:
-            true_val = float(p["True Prob"].replace("%",""))/100.0
-            p["_ev"] = ev_calc(true_val, p["Odds"])
-            p["_tier"] = get_tier(float(p["True Prob"].replace("%","")))
+            prob_val = float(p["True Prob"].replace('%',''))
+            ev = ev_calc(prob_val/100.0, p["Odds"])
+            tier = get_tier(prob_val)
             col1, col2, col3, col4, col5 = st.columns([4, 2, 2, 2, 2])
             with col1: st.markdown(f"**{p['Player']} – {p['Prop']}**  \nGroup: `{p['Group']}`")
             with col2: st.markdown(f"True: `{p['True Prob']}`")
-            with col3: st.markdown(f"Odds: `{p['Odds']}`  \nEV: `{p['_ev']}%`")
-            with col4: st.markdown(f"Tier: {p['_tier']}") 
+            with col3: st.markdown(f"Odds: `{p['Odds']}`  \nEV: `{ev}%`")
+            with col4: st.markdown(f"Tier: {tier}") 
             with col5:
                 if st.button("🌍 Add", key=f"add_gl_board_{p['id']}"):
-                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], true_val)
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], prob_val/100.0)
                     st.success("Added to Global Parlay")
 
     # ---- Position Selector ----
@@ -308,10 +305,10 @@ def nfl_app():
             avg_ypg = (ypg + def_yds) / 2
             avg_tds = (tds + def_tds) / 2
             adj_ypg, adj_tds = apply_defense_adjustments(avg_ypg, avg_tds, tier)
-            st.session_state.nfl_temp_props = []  # auto clear
+            st.session_state.nfl_temp_props = []
             std_prob = logistic_prob(adj_ypg, std_line)
             alt_prob = logistic_prob(adj_ypg, alt_line)
-            td_prob = logistic_prob(avg_tds, td_line, scale=0.5)
+            td_prob = logistic_prob(adj_tds, td_line, scale=0.5)
             under_td_prob = round(100.0 - td_prob, 2)
             st.info(f"Opponent Defense Tier: **{tier}**")
             st.success(f"📈 Over {std_line} Pass Yds → {std_prob:.2f}%")
@@ -321,95 +318,83 @@ def nfl_app():
             add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
             add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
 
- # ---- WR Module ----
-if position == "Wide Receiver":
-    st.header("🎯 Wide Receiver Inputs")
-    name = st.text_input("Wide Receiver Name", value="")
-    opp = st.text_input("Opponent Team", value="")
-    std_line = st.number_input("Standard Receiving Yards Line", value=0.0)
-    over_std = st.number_input("Odds Over (Standard)", value=0.0)
-    under_std = st.number_input("Odds Under (Standard)", value=0.0)
-    alt_line = st.number_input("Alt Over Line", value=0.0)
-    alt_odds = st.number_input("Odds for Alt Over", value=0.0)
-    rec_line = st.number_input("Receptions Line", value=0.0)
-    rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
-    rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
-    ypg = st.number_input("WR Yards/Game", value=0.0)
-    rpg = st.number_input("WR Receptions/Game", value=0.0)
-    def_yds = st.number_input("Defense WR Yards Allowed/Game", value=0.0)
-    def_rec = st.number_input("Defense WR Receptions Allowed/Game", value=0.0)
+    # ---- WR Module ----
+    if position == "Wide Receiver":
+        st.header("🎯 Wide Receiver Inputs")
+        name = st.text_input("Wide Receiver Name", value="")
+        opp = st.text_input("Opponent Team", value="")
+        std_line = st.number_input("Standard Receiving Yards Line", value=0.0)
+        over_std = st.number_input("Odds Over (Standard)", value=0.0)
+        under_std = st.number_input("Odds Under (Standard)", value=0.0)
+        alt_line = st.number_input("Alt Over Line", value=0.0)
+        alt_odds = st.number_input("Odds for Alt Over", value=0.0)
+        rec_line = st.number_input("Receptions Line", value=0.0)
+        rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
+        rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
+        ypg = st.number_input("WR Yards/Game", value=0.0)
+        rpg = st.number_input("WR Receptions/Game", value=0.0)
+        def_yds = st.number_input("Defense WR Yards Allowed/Game", value=0.0)
+        def_rec = st.number_input("Defense WR Receptions Allowed/Game", value=0.0)
 
-    if st.button("Simulate WR Props"):
-        tier = classify_def_tier(def_yds)
-        avg_ypg = (ypg + def_yds) / 2
-        avg_rpg = (rpg + def_rec) / 2
-        adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+        if st.button("Simulate WR Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_rpg = (rpg + def_rec) / 2
+            adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+            st.session_state.nfl_temp_props = []
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Rec Yds → {std_prob:.2f}%")
+            st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob:.2f}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob:.2f}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2):.2f}%")
+            add_temp_play(name, f"Over {std_line} Rec Yds", std_prob, over_std, "WR")
+            add_temp_play(name, f"Under {std_line} Rec Yds", round(100-std_prob,2), under_std, "WR")
+            add_temp_play(name, f"Over {alt_line} Alt Rec Yds", alt_prob, alt_odds, "WR")
+            add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "WR")
+            add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "WR")
 
-        st.session_state.nfl_temp_props = []  # auto clear
+    # ---- RB Module ----
+    if position == "Running Back":
+        st.header("🎯 Running Back Inputs")
+        name = st.text_input("Running Back Name", value="")
+        opp = st.text_input("Opponent Team", value="")
+        std_line = st.number_input("Standard Rushing Yards Line", value=0.0)
+        over_std = st.number_input("Odds Over (Standard)", value=0.0)
+        under_std = st.number_input("Odds Under (Standard)", value=0.0)
+        alt_line = st.number_input("Alt Over Line", value=0.0)
+        alt_odds = st.number_input("Odds for Alt Over", value=0.0)
+        rec_line = st.number_input("Receptions Line", value=0.0)
+        rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
+        rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
+        ypg = st.number_input("RB Yards/Game", value=0.0)
+        rpg = st.number_input("RB Receptions/Game", value=0.0)
+        def_yds = st.number_input("Defense Rush Yards Allowed/Game", value=0.0)
+        def_rec = st.number_input("Defense RB Receptions Allowed/Game", value=0.0)
 
-        # 🔧 FIXED SCALING
-        std_prob = logistic_prob(adj_ypg, std_line, scale=20.0)
-        alt_prob = logistic_prob(adj_ypg, alt_line, scale=20.0)
-        rec_prob = logistic_prob(avg_rpg, rec_line, scale=3.0)
+        if st.button("Simulate RB Props"):
+            tier = classify_def_tier(def_yds)
+            avg_ypg = (ypg + def_yds) / 2
+            avg_rpg = (rpg + def_rec) / 2
+            adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+            st.session_state.nfl_temp_props = []
+            std_prob = logistic_prob(adj_ypg, std_line)
+            alt_prob = logistic_prob(adj_ypg, alt_line)
+            rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
+            st.info(f"Opponent Defense Tier: **{tier}**")
+            st.success(f"📈 Over {std_line} Rush Yds → {std_prob:.2f}%")
+            st.success(f"📈 Over {alt_line} Alt Rush Yds → {alt_prob:.2f}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob:.2f}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2):.2f}%")
+            add_temp_play(name, f"Over {std_line} Rush Yds", std_prob, over_std, "RB")
+            add_temp_play(name, f"Under {std_line} Rush Yds", round(100-std_prob,2), under_std, "RB")
+            add_temp_play(name, f"Over {alt_line} Alt Rush Yds", alt_prob, alt_odds, "RB")
+            add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "RB")
+            add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "RB")
 
-        st.info(f"Opponent Defense Tier: **{tier}**")
-        st.success(f"📈 Over {std_line} Rec Yds → {std_prob}%")
-        st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob}%")
-        st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
-        st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
-
-        add_temp_play(name, f"Over {std_line} Rec Yds", std_prob, over_std, "WR")
-        add_temp_play(name, f"Under {std_line} Rec Yds", round(100-std_prob,2), under_std, "WR")
-        add_temp_play(name, f"Over {alt_line} Alt Rec Yds", alt_prob, alt_odds, "WR")
-        add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "WR")
-        add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "WR")
-
-
-# ---- RB Module ----
-if position == "Running Back":
-    st.header("🎯 Running Back Inputs")
-    name = st.text_input("Running Back Name", value="")
-    opp = st.text_input("Opponent Team", value="")
-    std_line = st.number_input("Standard Rushing Yards Line", value=0.0)
-    over_std = st.number_input("Odds Over (Standard)", value=0.0)
-    under_std = st.number_input("Odds Under (Standard)", value=0.0)
-    alt_line = st.number_input("Alt Over Line", value=0.0)
-    alt_odds = st.number_input("Odds for Alt Over", value=0.0)
-    rec_line = st.number_input("Receptions Line", value=0.0)
-    rec_over_odds = st.number_input("Odds for Over Receptions", value=0.0)
-    rec_under_odds = st.number_input("Odds for Under Receptions", value=0.0)
-    ypg = st.number_input("RB Yards/Game", value=0.0)
-    rpg = st.number_input("RB Receptions/Game", value=0.0)
-    def_yds = st.number_input("Defense Rush Yards Allowed/Game", value=0.0)
-    def_rec = st.number_input("Defense RB Receptions Allowed/Game", value=0.0)
-
-    if st.button("Simulate RB Props"):
-        tier = classify_def_tier(def_yds)
-        avg_ypg = (ypg + def_yds) / 2
-        avg_rpg = (rpg + def_rec) / 2
-        adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
-
-        st.session_state.nfl_temp_props = []  # auto clear
-
-        # 🔧 FIXED SCALING
-        std_prob = logistic_prob(adj_ypg, std_line, scale=20.0)
-        alt_prob = logistic_prob(adj_ypg, alt_line, scale=20.0)
-        rec_prob = logistic_prob(avg_rpg, rec_line, scale=3.0)
-
-        st.info(f"Opponent Defense Tier: **{tier}**")
-        st.success(f"📈 Over {std_line} Rush Yds → {std_prob}%")
-        st.success(f"📈 Over {alt_line} Alt Rush Yds → {alt_prob}%")
-        st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
-        st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
-
-        add_temp_play(name, f"Over {std_line} Rush Yds", std_prob, over_std, "RB")
-        add_temp_play(name, f"Under {std_line} Rush Yds", round(100-std_prob,2), under_std, "RB")
-        add_temp_play(name, f"Over {alt_line} Alt Rush Yds", alt_prob, alt_odds, "RB")
-        add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "RB")
-        add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "RB")
-
-
-    # ---- Show Boards ----
+    # Render lists + global add buttons
     render_temp_save_controls()
     render_board()
 
