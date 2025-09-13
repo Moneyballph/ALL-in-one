@@ -934,7 +934,7 @@ def pitcher_app():
 
 # =====================================================
 # ================ MODULE: NBA Simulator ==============
-# (Restored full logic with global parlay add)
+# (Updated with % display instead of decimals)
 # =====================================================
 def nba_app():
     st.header("🏀 MoneyBall Phil — Basketball Simulator")
@@ -1004,13 +1004,12 @@ def nba_app():
         implied_under = american_to_prob_text(odds_under)
         row = {
             "Player": player_name, "Type": stat_type, "Line": sportsbook_line,
-            "True": hit_chance, "OverOdds": odds_over, "UnderOdds": odds_under
+            "True %": f"{hit_chance*100:.2f}%",  # ✅ now percentage
+            "OverOdds": odds_over, "UnderOdds": odds_under,
+            "TrueFrac": hit_chance  # keep fraction for EV/parlay logic
         }
         st.session_state.last_result_nba = row
-        st.session_state.nba_board.append({
-            "Player": player_name, "Type": stat_type, "Line": sportsbook_line,
-            "True %": f"{hit_chance*100:.1f}%"
-        })
+        st.session_state.nba_board.append(row)
         st.success(f"{player_name} — True {hit_chance*100:.2f}%")
 
     r = st.session_state.get("last_result_nba")
@@ -1023,7 +1022,7 @@ def nba_app():
             if st.button("🌍 Add Over to Global Parlay (NBA)"):
                 try:
                     odds = float(str(r["OverOdds"]).replace("+",""))
-                    add_to_global_parlay("NBA", f"{r['Player']} Over {r['Line']} ({r['Type']})", odds, r["True"])
+                    add_to_global_parlay("NBA", f"{r['Player']} Over {r['Line']} ({r['Type']})", odds, r["TrueFrac"])
                     st.success("Added Over to Global")
                 except Exception:
                     st.warning("Could not parse Over odds.")
@@ -1031,7 +1030,7 @@ def nba_app():
             if st.button("🌍 Add Under to Global Parlay (NBA)"):
                 try:
                     odds = float(str(r["UnderOdds"]).replace("+",""))
-                    add_to_global_parlay("NBA", f"{r['Player']} Under {r['Line']} ({r['Type']})", odds, 1.0 - float(r["True"]))
+                    add_to_global_parlay("NBA", f"{r['Player']} Under {r['Line']} ({r['Type']})", odds, 1.0 - float(r["TrueFrac"]))
                     st.success("Added Under to Global")
                 except Exception:
                     st.warning("Could not parse Under odds.")
@@ -1041,6 +1040,7 @@ def nba_app():
     if st.session_state.nba_board:
         df = pd.DataFrame(st.session_state.nba_board)
         st.dataframe(df, use_container_width=True)
+
 # =====================================================
 # ================= MODULE: Soccer EV ==================
 # (Full logic restored; O1.5 / O2.5 / BTTS + parlay add)
