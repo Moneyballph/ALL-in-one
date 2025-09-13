@@ -399,11 +399,11 @@ def nfl_app():
     render_board()
 
 # =====================================================
-# ============ MODULE: ATS & Totals (v3.3) ============
-# (Full version with Advanced Adjustments + Global Parlay)
+# ============ MODULE: ATS & Totals (v3.4) ============
+# (Fixed MLB inputs + Correct % outputs everywhere)
 # =====================================================
 def ats_totals_app():
-    st.header("📊 Moneyball Phil — ATS & Totals (v3.3)")
+    st.header("📊 Moneyball Phil — ATS & Totals (v3.4)")
 
     # ----------------- State -----------------
     def init_state():
@@ -572,21 +572,21 @@ def ats_totals_app():
                 true_home = _std_norm_cdf(z_spread_home) * 100.0
 
             ev_home, impl_home = calculate_ev_pct(true_home, S.spread_odds_home)
-            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, true_home, impl_home, ev_home])
+            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:.2f}%"])
 
             true_away = 100.0 - true_home
             ev_away, impl_away = calculate_ev_pct(true_away, S.spread_odds_away)
-            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, true_away, impl_away, ev_away])
+            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:.2f}%"])
 
             # Totals
             z_total_over = (proj_total - S.total_line) / sd_total
             true_over = _std_norm_cdf(z_total_over) * 100.0
             ev_over, impl_over = calculate_ev_pct(true_over, S.over_odds)
-            rows.append([f"Over {S.total_line:.2f}", S.over_odds, true_over, impl_over, ev_over])
+            rows.append([f"Over {S.total_line:.2f}", S.over_odds, f"{true_over:.2f}%", f"{impl_over:.2f}%", f"{ev_over:.2f}%"])
 
             true_under = max(0.0, 100.0 - true_over)
             ev_under, impl_under = calculate_ev_pct(true_under, S.under_odds)
-            rows.append([f"Under {S.total_line:.2f}", S.under_odds, true_under, impl_under, ev_under])
+            rows.append([f"Under {S.total_line:.2f}", S.under_odds, f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
 
             df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
             st.session_state.results_df = df
@@ -601,10 +601,11 @@ def ats_totals_app():
                 colA, colB = st.columns(2)
                 with colA:
                     if st.button("🌍 Add Selected to Global Parlay"):
-                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"])/100.0)
+                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"].replace("%",""))/100.0)
                         st.success("Added to Global Parlay")
                 with colB:
-                    st.caption(f"True {selected['True %']:.1f}% | Odds {int(selected['Odds'])}")
+                    st.caption(f"True {selected['True %']} | Odds {int(selected['Odds'])}")
+
 # =====================================================
 # ======== MODULE: MLB HIT SIMULATOR (Updated) ========
 # =====================================================
