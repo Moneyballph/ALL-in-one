@@ -735,7 +735,8 @@ def mlb_hits_app():
 
 
 # =====================================================
-# ======= MODULE: Pitcher ER & K Simulator (Updated) ==
+# ======= MODULE: Pitcher ER & K Simulator ============
+# (Fixed formatting to show % instead of decimals)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
@@ -765,7 +766,7 @@ def pitcher_app():
         if x < 0: raise ValueError("Percentage cannot be negative.")
         return x
 
-    # Poisson pmf/cdf (no scipy)
+    # Poisson pmf/cdf
     def poisson_pmf(k: int, lam: float) -> float:
         try:
             return _m.exp(-lam) * (lam**k) / _m.factorial(k)
@@ -836,8 +837,9 @@ def pitcher_app():
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
-            true_prob = poisson_cdf(2, lam_er)   # fraction
-            implied_prob = american_to_prob_local(under_odds)
+            # P(X ≤ 2 ER)
+            true_prob = round(poisson_cdf(2, lam_er) * 100, 2)   # now % format
+            implied_prob = american_to_prob_local(under_odds) * 100
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
@@ -846,18 +848,15 @@ def pitcher_app():
 
         er = st.session_state.er_result
         if er:
-            st.success(f"{er['pitcher']} — U2.5 ER True {er['true_prob']*100:.2f}% | Odds {int(er['odds'])}")
+            st.success(f"{er['pitcher']} — U2.5 ER True {er['true_prob']:.2f}% | Odds {int(er['odds'])}")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save to Board: U2.5 ER"):
-                    st.session_state.player_board.append({
-                        "Market":"ER","Description":f"{er['pitcher']} U2.5 ER",
-                        "Odds":er["odds"],"True %":f"{er['true_prob']*100:.2f}%"
-                    })
+                    st.session_state.player_board.append({"Market":"ER","Description":f"{er['pitcher']} U2.5 ER","Odds":er["odds"],"True Prob":f"{er['true_prob']:.2f}%"})
                     st.success("Saved.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
-                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"])
+                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100)
                     st.success("Added to Global Parlay")
 
     # ---------------------------
@@ -909,8 +908,8 @@ def pitcher_app():
             k_under = int(_m.floor(k_line_v))
             k_over  = k_under + 1
 
-            p_under = binom_cdf(n_bf, k_under, pK)
-            p_over  = 1.0 - binom_cdf(n_bf, k_over-1, pK)
+            p_under = binom_cdf(n_bf, k_under, pK) * 100
+            p_over  = (1.0 - binom_cdf(n_bf, k_over-1, pK)) * 100
 
             st.session_state.k_result = {
                 "pitcher": k_pitcher, "k_line": k_line_v,
@@ -920,15 +919,15 @@ def pitcher_app():
 
         kr = st.session_state.k_result
         if kr:
-            st.success(f"{kr['pitcher']} — K {kr['k_line']}  |  Over True {kr['p_over']*100:.2f}%  /  Under True {kr['p_under']*100:.2f}%")
+            st.success(f"{kr['pitcher']} — K {kr['k_line']}  |  Over True {kr['p_over']:.2f}%  /  Under True {kr['p_under']:.2f}%")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("🌍 Add to Global Parlay: Over K"):
-                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"])
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"]/100)
                     st.success("Added Over leg.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: Under K"):
-                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"])
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100)
                     st.success("Added Under leg.")
 
 
