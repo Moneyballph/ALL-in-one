@@ -725,14 +725,18 @@ def mlb_hits_app():
                     st.success("Added to Global Parlay")
                 except Exception:
                     st.warning("Couldn't parse odds for global parlay.")
+st.markdown("---")
+st.header("📌 Saved Player Board")
+if not st.session_state.saved_players:
+    st.info("No saved players yet.")
+else:
+    df = pd.DataFrame(st.session_state.saved_players)
+    # Convert decimals to percentage strings
+    df["true_prob"] = (df["true_prob"] * 100).round(2).astype(str) + "%"
+    df["implied_prob"] = (df["implied_prob"] * 100).round(2).astype(str) + "%"
+    df["ev"] = df["ev"].round(1).astype(str) + "%"
+    st.dataframe(df, use_container_width=True)
 
-    st.markdown("---")
-    st.header("📌 Saved Player Board")
-    if not st.session_state.saved_players:
-        st.info("No saved players yet.")
-    else:
-        df = pd.DataFrame(st.session_state.saved_players)
-        st.dataframe(df, use_container_width=True)
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
