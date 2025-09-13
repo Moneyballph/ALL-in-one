@@ -399,11 +399,11 @@ def nfl_app():
     render_board()
 
 # =====================================================
-# ============ MODULE: ATS & Totals (v3.4) ============
-# (Fixed MLB inputs + Correct % outputs everywhere)
+# ============ MODULE: ATS & Totals (v3.5) ============
+# (All adjustments applied + projection summary + blue lines + % strings)
 # =====================================================
 def ats_totals_app():
-    st.header("📊 Moneyball Phil — ATS & Totals (v3.4)")
+    st.header("📊 Moneyball Phil — ATS & Totals (v3.5)")
 
     # ----------------- State -----------------
     def init_state():
@@ -446,7 +446,14 @@ def ats_totals_app():
         mapping = {"NFL": 10.0, "NCAA Football": 12.0, "NBA": 12.0, "NCAA Basketball": 15.0, "MLB": 8.0}
         return mapping.get(sport, 10.0)
 
+    def tier_by_true_prob(true_pct: float) -> str:
+        if true_pct >= 80: return "🟢 Elite"
+        if true_pct >= 65: return "🟡 Strong"
+        if true_pct >= 50: return "🟠 Moderate"
+        return "🔴 Risky"
+
     def project_scores_base(H_pf: float, H_pa: float, A_pf: float, A_pa: float):
+        # baseline expected points/runs before adjustments
         return (H_pf + A_pa) / 2.0, (A_pf + H_pa) / 2.0
 
     # ----------------- UI -----------------
@@ -469,6 +476,7 @@ def ats_totals_app():
 
             s1, s2 = st.columns(2)
             with s1:
+                # allow negative spreads (no min_value)
                 st.session_state.spread_line_home = st.number_input("Home Spread (negative if favorite)", step=0.01, format="%.2f", value=float(st.session_state.spread_line_home))
             with s2:
                 st.caption(f"Away Spread (auto): {(-st.session_state.spread_line_home):+.2f}")
@@ -502,8 +510,10 @@ def ats_totals_app():
                 with u3:
                     auto_volatility = st.checkbox("Auto volatility by sport", value=True)
                     pace_pct_global = st.number_input("Global pace (±% total)", value=0.0, step=1.0, format="%.0f")
-                    variance_pct_manual = st.number_input("Volatility tweak (±% SD)", value=0.0, step=5.0, format="%.0f")
+                    variance_pct_manual = st.number_input("Volatility tweak (±% SD)", value=0.0, step=5.0, format="%.0f",
+                                                          help="Used only when Auto volatility is OFF")
 
+                # Football specifics
                 if sport in ["NFL", "NCAA Football"]:
                     st.markdown("**Football specifics**")
                     f1, f2, f3 = st.columns(3)
@@ -517,6 +527,7 @@ def ats_totals_app():
                 else:
                     plays_pct = redzone_H_pct = redzone_A_pct = to_margin_pts = 0.0
 
+                # Basketball specifics
                 if sport in ["NBA", "NCAA Basketball"]:
                     st.markdown("**Basketball specifics**")
                     b1, b2, b3 = st.columns(3)
@@ -533,6 +544,7 @@ def ats_totals_app():
                 else:
                     pace_pct_hoops = ortg_H_pct = ortg_A_pct = drtg_H_pct = drtg_A_pct = rest_H_pct = rest_A_pct = 0.0
 
+                # MLB specifics
                 if sport == "MLB":
                     st.markdown("**MLB specifics**")
                     m1, m2, m3 = st.columns(3)
@@ -555,38 +567,131 @@ def ats_totals_app():
     with col_results:
         if run_projection:
             S = st.session_state
+
+            # 1) Baseline projection
             home_pts, away_pts = project_scores_base(S.home_pf, S.home_pa, S.away_pf, S.away_pa)
+
+            # 2) Universal PF modifiers (form+injury)
+            home_pf_mult = 1.0 + (form_H_pct + injury_H_pct) / 100.0
+            away_pf_mult = 1.0 + (form_A_pct + injury_A_pct) / 100.0
+            home_pts *= home_pf_mult
+            away_pts *= away_pf_mult
+
+            # 3) Sport-specific PF/pace modifiers
+            if sport in ["NFL", "NCAA Football"]:
+                # red zone tweaks accelerate scoring efficiency
+                home_pts *= (1.0 + redzone_H_pct/100.0)
+                away_pts *= (1.0 + redzone_A_pct/100.0)
+                # plays/pace affects total tempo
+                total_temp = (home_pts + away_pts) * (1.0 + plays_pct/100.0)
+                # re-split back proportionally
+                total_pre = (home_pts + away_pts)
+                if total_pre > 0:
+                    home_share = home_pts/total_pre
+                    away_share = away_pts/total_pre
+                    home_pts = total_temp * home_share
+                    away_pts = total_temp * away_share
+                # turnover margin shifts margin toward home
+                # apply as points on margin (not total inflation)
+                margin_shift = to_margin_pts
+                # we'll add this after total/pace adjustments via margin math
+            else:
+                margin_shift = 0.0
+
+            if sport in ["NBA", "NCAA Basketball"]:
+                # pace affects total
+                total_temp = (home_pts + away_pts) * (1.0 + pace_pct_hoops/100.0)
+                total_pre = (home_pts + away_pts)
+                if total_pre > 0:
+                    hs = home_pts/total_pre
+                    as_ = away_pts/total_pre
+                    home_pts = total_temp * hs
+                    away_pts = total_temp * as_
+                # rest and ORtg (offense) boost own PF
+                home_pts *= (1.0 + (rest_H_pct + ortg_H_pct)/100.0)
+                away_pts *= (1.0 + (rest_A_pct + ortg_A_pct)/100.0)
+                # DRtg reduces opponent scoring
+                away_pts *= (1.0 - drtg_H_pct/100.0)
+                home_pts *= (1.0 - drtg_A_pct/100.0)
+
+            if sport == "MLB":
+                # add SP/Bullpen runs directly
+                home_pts += (sp_H_runs + bullpen_H_runs)
+                away_pts += (sp_A_runs + bullpen_A_runs)
+                # park & weather scale total
+                total_temp = (home_pts + away_pts) * (1.0 + (park_total_pct + weather_total_pct)/100.0)
+                total_pre = (home_pts + away_pts)
+                if total_pre > 0:
+                    hs = home_pts/total_pre
+                    as_ = away_pts/total_pre
+                    home_pts = total_temp * hs
+                    away_pts = total_temp * as_
+
+            # 4) Global pace (applies to all sports)
+            total_temp = (home_pts + away_pts) * (1.0 + pace_pct_global/100.0)
+            total_pre = (home_pts + away_pts)
+            if total_pre > 0:
+                hs = home_pts/total_pre
+                as_ = away_pts/total_pre
+                home_pts = total_temp * hs
+                away_pts = total_temp * as_
+
+            # 5) Apply margin shift last (football turnovers)
+            proj_margin = (home_pts - away_pts) + margin_shift
+            proj_total  = home_pts + away_pts
+
+            # 6) Volatility (sd) selection
             auto_vol_used = suggested_volatility(sport) if auto_volatility else float(variance_pct_manual)
             sd_total, sd_margin = get_sport_sigmas(sport)
-            sd_total *= (1 + auto_vol_used/100.0); sd_margin *= (1 + auto_vol_used/100.0)
-            proj_total = home_pts + away_pts
-            proj_margin = home_pts - away_pts
+            sd_total  *= (1 + auto_vol_used/100.0)
+            sd_margin *= (1 + auto_vol_used/100.0)
+
+            # ---- Projection Summary ----
+            st.subheader("Projection Results")
+            st.markdown(
+                f"**Projected Home:** {home_pts:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Projected Away:** {away_pts:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Projected Total:** {proj_total:.2f} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"**Projected Margin:** {proj_margin:+.2f}"
+            )
+
             rows = []
 
-            # Spread probs
+            # ---- Spread probabilities ----
             if S.spread_line_home < 0:
-                z_spread_home = (proj_margin - abs(S.spread_line_home)) / sd_margin
+                z_spread_home = (proj_margin - abs(S.spread_line_home)) / sd_margin if sd_margin > 0 else 0.0
                 true_home = _std_norm_cdf(z_spread_home) * 100.0
             else:
-                z_spread_home = (proj_margin + abs(S.spread_line_home)) / sd_margin
+                z_spread_home = (proj_margin + abs(S.spread_line_home)) / sd_margin if sd_margin > 0 else 0.0
                 true_home = _std_norm_cdf(z_spread_home) * 100.0
 
             ev_home, impl_home = calculate_ev_pct(true_home, S.spread_odds_home)
-            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:.2f}%"])
+            tier_home = tier_by_true_prob(true_home)
+            # blue quick line
+            st.markdown(f"🔵 **{S.home} {S.spread_line_home:+.2f}** → True **{true_home:.2f}%** | Implied **{impl_home:.2f}%** | EV **{ev_home:+.2f}%** | {tier_home}")
 
             true_away = 100.0 - true_home
             ev_away, impl_away = calculate_ev_pct(true_away, S.spread_odds_away)
-            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:.2f}%"])
+            tier_away = tier_by_true_prob(true_away)
+            st.markdown(f"🔵 **{S.away} {(-S.spread_line_home):+.2f}** → True **{true_away:.2f}%** | Implied **{impl_away:.2f}%** | EV **{ev_away:+.2f}%** | {tier_away}")
 
-            # Totals
-            z_total_over = (proj_total - S.total_line) / sd_total
+            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:+.2f}%"])
+            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:+.2f}%"])
+
+            # ---- Totals probabilities ----
+            z_total_over = (proj_total - S.total_line) / sd_total if sd_total > 0 else 0.0
             true_over = _std_norm_cdf(z_total_over) * 100.0
             ev_over, impl_over = calculate_ev_pct(true_over, S.over_odds)
-            rows.append([f"Over {S.total_line:.2f}", S.over_odds, f"{true_over:.2f}%", f"{impl_over:.2f}%", f"{ev_over:.2f}%"])
+            tier_over = tier_by_true_prob(true_over)
+            st.markdown(f"🔵 **Over {S.total_line:.2f}** → True **{true_over:.2f}%** | Implied **{impl_over:.2f}%** | EV **{ev_over:+.2f}%** | {tier_over}")
 
             true_under = max(0.0, 100.0 - true_over)
             ev_under, impl_under = calculate_ev_pct(true_under, S.under_odds)
-            rows.append([f"Under {S.total_line:.2f}", S.under_odds, f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
+            tier_under = tier_by_true_prob(true_under)
+            st.markdown(f"🔵 **Under {S.total_line:.2f}** → True **{true_under:.2f}%** | Implied **{impl_under:.2f}%** | EV **{ev_under:+.2f}%** | {tier_under}")
+
+            rows.append([f"Over {S.total_line:.2f}",  S.over_odds,  f"{true_over:.2f}%",  f"{impl_over:.2f}%",  f"{ev_over:+.2f}%"])
+            rows.append([f"Under {S.total_line:.2f}", S.under_odds, f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:+.2f}%"])
 
             df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
             st.session_state.results_df = df
@@ -595,16 +700,24 @@ def ats_totals_app():
             df = st.session_state.results_df
             st.subheader("Bet Results")
             st.dataframe(df, use_container_width=True)
+
             if len(df) > 0:
                 choice = st.selectbox("Select a bet:", options=list(df["Bet Type"]))
                 selected = df[df["Bet Type"] == choice].iloc[0]
+
                 colA, colB = st.columns(2)
                 with colA:
                     if st.button("🌍 Add Selected to Global Parlay"):
-                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"].replace("%",""))/100.0)
+                        add_to_global_parlay(
+                            "ATS/Totals",
+                            str(selected["Bet Type"]),
+                            float(selected["Odds"]),
+                            float(str(selected["True %"]).replace("%",""))/100.0
+                        )
                         st.success("Added to Global Parlay")
                 with colB:
                     st.caption(f"True {selected['True %']} | Odds {int(selected['Odds'])}")
+
 
 # =====================================================
 # ======== MODULE: MLB HIT SIMULATOR (Updated) ========
