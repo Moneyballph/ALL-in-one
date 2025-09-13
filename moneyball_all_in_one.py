@@ -303,7 +303,7 @@ def nfl_app():
         def_yds = st.number_input("Defense Pass Yards Allowed/Game", value=0.0)
         def_tds = st.number_input("Defense Pass TDs Allowed/Game", value=0.0)
 
-      if st.button("Simulate QB Props"):
+  if st.button("Simulate QB Props"):
     tier = classify_def_tier(def_yds)
     avg_ypg = (ypg + def_yds) / 2
     avg_tds = (tds + def_tds) / 2
