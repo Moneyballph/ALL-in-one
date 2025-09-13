@@ -1043,7 +1043,7 @@ def nba_app():
 
 # =====================================================
 # ================= MODULE: Soccer EV ==================
-# (Full logic restored; O1.5 / O2.5 / BTTS + parlay add)
+# (Updated with % display instead of decimals)
 # =====================================================
 def soccer_app():
     st.header("⚽ Moneyball Phil — Soccer EV (O1.5 / O2.5 / BTTS)")
@@ -1168,7 +1168,12 @@ def soccer_app():
             if compute_save:
                 rec = {
                     "id": next_id(), "label": f"{home_team} vs {away_team}",
-                    "probs": probs,
+                    "probs": {
+                        "O1.5": round(probs["O1.5"]*100, 2),  # ✅ store as %
+                        "O2.5": round(probs["O2.5"]*100, 2),
+                        "BTTS": round(probs["BTTS"]*100, 2)
+                    },
+                    "probs_frac": probs,  # ✅ keep raw fractions for EV/parlay
                     "odds": {"O1.5": odds_o15, "O2.5": odds_o25, "BTTS": odds_btts}
                 }
                 st.session_state.matches.append(rec); st.success("Match saved.")
@@ -1179,7 +1184,7 @@ def soccer_app():
         st.markdown(f"**{match['label']}**")
         for key, label in [("O1.5","Over 1.5"), ("O2.5","Over 2.5"), ("BTTS","BTTS")]:
             row = st.columns([1.4, 1.2, 1.2, 1.3])
-            true_p = float(match["probs"][key])
+            true_p_pct = float(match["probs"][key])
             odds_str = match["odds"][key]
             odds_val = None
             try:
@@ -1190,12 +1195,13 @@ def soccer_app():
             except Exception:
                 pass
             row[0].write(label)
-            row[1].write(f"True: {true_p*100:.2f}%")
+            row[1].write(f"True: {true_p_pct:.2f}%")  # ✅ now percentage
             row[2].write(f"Odds: {odds_str}")
             with row[3]:
                 if odds_val is not None and st.button("🌍 Add", key=f"add_soc_{match['id']}_{key}"):
-                    add_to_global_parlay("Soccer", f"{match['label']} — {label}", odds_val, true_p)
+                    add_to_global_parlay("Soccer", f"{match['label']} — {label}", odds_val, match["probs_frac"][key])
                     st.success("Added to Global Parlay")
+
 # =====================================================
 # ================== Router / Layout ==================
 # =====================================================
