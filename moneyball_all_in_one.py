@@ -209,7 +209,7 @@ def nfl_app():
 
     def logistic_prob(x_value: float, line_value: float, scale: float = 15.0) -> float:
         try:
-            p = 1.0 / (1.0 + math.exp(-(x_value - line_value) / scale))
+            p = 1.0 / (1.0 + _math_nfl.exp(-(x_value - line_value) / scale))
         except OverflowError:
             p = 0.0 if (x_value - line_value) < 0 else 1.0
         return round(p * 100.0, 2)
@@ -234,12 +234,59 @@ def nfl_app():
             "Group": group
         })
 
+    # ---- UI Common Helpers ----
+    def render_temp_save_controls():
+        if not st.session_state.nfl_temp_props:
+            return
+        st.subheader("📝 Save Plays from Latest Simulation")
+        to_save = []
+        for p in st.session_state.nfl_temp_props:
+            col1, col2, col3, col4, col5 = st.columns([4, 2, 2, 2, 2])
+            with col1:
+                st.markdown(f"**{p['Player']} – {p['Prop']}**  \nTrue: `{p['True Prob']}%` | Odds: `{p['Odds']}`")
+            with col2:
+                ev = ev_calc(p["True Prob"]/100.0, p["Odds"])
+                st.markdown(f"EV: `{ev}%`")
+            with col3:
+                tier = get_tier(p["True Prob"])
+                st.markdown(f"Tier: {tier}")
+            with col4:
+                if st.checkbox("Save", key=f"save_{p['id']}"):
+                    to_save.append(p)
+            with col5:
+                if st.button("🌍 Add", key=f"add_gl_{p['id']}"):
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], p["True Prob"]/100.0)
+                    st.success("Added to Global Parlay")
+        if st.button("➕ Add Selected to Board"):
+            for p in to_save:
+                st.session_state.nfl_all_props.append(p)
+            st.session_state.nfl_temp_props = []
+            st.success("Selected plays added to Top Player Board.")
+
+    def render_board():
+        st.markdown("---")
+        st.subheader("📊 Top Player Board (Saved Plays)")
+        if not st.session_state.nfl_all_props:
+            st.info("No saved plays yet.")
+            return
+        sorted_props = sorted(st.session_state.nfl_all_props, key=lambda x: x["True Prob"], reverse=True)
+        for p in sorted_props:
+            p["_ev"] = ev_calc(p["True Prob"]/100.0, p["Odds"])
+            p["_tier"] = get_tier(p["True Prob"])
+            col1, col2, col3, col4, col5 = st.columns([4, 2, 2, 2, 2])
+            with col1: st.markdown(f"**{p['Player']} – {p['Prop']}**  \nGroup: `{p['Group']}`")
+            with col2: st.markdown(f"True: `{p['True Prob']}%`")
+            with col3: st.markdown(f"Odds: `{p['Odds']}`  \nEV: `{p['_ev']}%`")
+            with col4: st.markdown(f"Tier: {p['_tier']}") 
+            with col5:
+                if st.button("🌍 Add", key=f"add_gl_board_{p['id']}"):
+                    add_to_global_parlay("NFL", f"{p['Player']} — {p['Prop']}", p["Odds"], p["True Prob"]/100.0)
+                    st.success("Added to Global Parlay")
+
     # ---- Position Selector ----
     position = st.selectbox("Select Position", ["Quarterback", "Wide Receiver", "Running Back"])
 
-    # ========================
-    # Quarterback
-    # ========================
+    # ---- QB Module ----
     if position == "Quarterback":
         st.header("🎯 Quarterback Inputs")
         name = st.text_input("Quarterback Name", value="")
@@ -261,26 +308,20 @@ def nfl_app():
             avg_ypg = (ypg + def_yds) / 2
             avg_tds = (tds + def_tds) / 2
             adj_ypg, adj_tds = apply_defense_adjustments(avg_ypg, avg_tds, tier)
-
             st.session_state.nfl_temp_props = []  # auto clear
-
             std_prob = logistic_prob(adj_ypg, std_line)
             alt_prob = logistic_prob(adj_ypg, alt_line)
             td_prob = logistic_prob(adj_tds, td_line, scale=0.5)
             under_td_prob = round(100.0 - td_prob, 2)
-
             st.info(f"Opponent Defense Tier: **{tier}**")
-            st.success(f"📈 Over {std_line} Pass Yds → {std_prob:.2f}%")
-            st.success(f"📈 Over {alt_line} Alt Pass Yds → {alt_prob:.2f}%")
-            st.success(f"📉 Under {td_line} Pass TDs → {under_td_prob:.2f}%")
-
+            st.success(f"📈 Over {std_line} Pass Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Pass Yds → {alt_prob}%")
+            st.success(f"📉 Under {td_line} Pass TDs → {under_td_prob}%")
             add_temp_play(name, f"Over {std_line} Pass Yds", std_prob, over_std, "QB")
             add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
             add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
 
-    # ========================
-    # Wide Receiver
-    # ========================
+    # ---- WR Module ----
     if position == "Wide Receiver":
         st.header("🎯 Wide Receiver Inputs")
         name = st.text_input("Wide Receiver Name", value="")
@@ -303,27 +344,22 @@ def nfl_app():
             avg_ypg = (ypg + def_yds) / 2
             avg_rpg = (rpg + def_rec) / 2
             adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
-
             st.session_state.nfl_temp_props = []  # auto clear
             std_prob = logistic_prob(adj_ypg, std_line)
             alt_prob = logistic_prob(adj_ypg, alt_line)
             rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
-
             st.info(f"Opponent Defense Tier: **{tier}**")
-            st.success(f"📈 Over {std_line} Rec Yds → {std_prob:.2f}%")
-            st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob:.2f}%")
-            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob:.2f}%")
-            st.success(f"📉 Under {rec_line} Receptions → {100-rec_prob:.2f}%")
-
+            st.success(f"📈 Over {std_line} Rec Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
             add_temp_play(name, f"Over {std_line} Rec Yds", std_prob, over_std, "WR")
             add_temp_play(name, f"Under {std_line} Rec Yds", round(100-std_prob,2), under_std, "WR")
             add_temp_play(name, f"Over {alt_line} Alt Rec Yds", alt_prob, alt_odds, "WR")
             add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "WR")
             add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "WR")
 
-    # ========================
-    # Running Back
-    # ========================
+    # ---- RB Module ----
     if position == "Running Back":
         st.header("🎯 Running Back Inputs")
         name = st.text_input("Running Back Name", value="")
@@ -346,24 +382,20 @@ def nfl_app():
             avg_ypg = (ypg + def_yds) / 2
             avg_rpg = (rpg + def_rec) / 2
             adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
-
             st.session_state.nfl_temp_props = []  # auto clear
             std_prob = logistic_prob(adj_ypg, std_line)
             alt_prob = logistic_prob(adj_ypg, alt_line)
             rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
-
             st.info(f"Opponent Defense Tier: **{tier}**")
-            st.success(f"📈 Over {std_line} Rush Yds → {std_prob:.2f}%")
-            st.success(f"📈 Over {alt_line} Alt Rush Yds → {alt_prob:.2f}%")
-            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob:.2f}%")
-            st.success(f"📉 Under {rec_line} Receptions → {100-rec_prob:.2f}%")
-
+            st.success(f"📈 Over {std_line} Rush Yds → {std_prob}%")
+            st.success(f"📈 Over {alt_line} Alt Rush Yds → {alt_prob}%")
+            st.success(f"🎯 Over {rec_line} Receptions → {rec_prob}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2)}%")
             add_temp_play(name, f"Over {std_line} Rush Yds", std_prob, over_std, "RB")
             add_temp_play(name, f"Under {std_line} Rush Yds", round(100-std_prob,2), under_std, "RB")
             add_temp_play(name, f"Over {alt_line} Alt Rush Yds", alt_prob, alt_odds, "RB")
             add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "RB")
             add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "RB")
-
 
     # Render lists + global add buttons
     render_temp_save_controls()
@@ -693,18 +725,14 @@ def mlb_hits_app():
                     st.success("Added to Global Parlay")
                 except Exception:
                     st.warning("Couldn't parse odds for global parlay.")
-st.markdown("---")
-st.header("📌 Saved Player Board")
-if not st.session_state.saved_players:
-    st.info("No saved players yet.")
-else:
-    df = pd.DataFrame(st.session_state.saved_players)
-    # Convert decimals to percentage strings
-    df["true_prob"] = (df["true_prob"] * 100).round(2).astype(str) + "%"
-    df["implied_prob"] = (df["implied_prob"] * 100).round(2).astype(str) + "%"
-    df["ev"] = df["ev"].round(1).astype(str) + "%"
-    st.dataframe(df, use_container_width=True)
 
+    st.markdown("---")
+    st.header("📌 Saved Player Board")
+    if not st.session_state.saved_players:
+        st.info("No saved players yet.")
+    else:
+        df = pd.DataFrame(st.session_state.saved_players)
+        st.dataframe(df, use_container_width=True)
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
@@ -1199,3 +1227,4 @@ else:
 
 # Close content div (after banner spacing)
 st.markdown('</div>', unsafe_allow_html=True)
+
