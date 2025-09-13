@@ -735,8 +735,7 @@ def mlb_hits_app():
 
 
 # =====================================================
-# ======= MODULE: Pitcher ER & K Simulator ============
-# (Restored with ERA, WHIP, K/9; no SciPy dependency)
+# ======= MODULE: Pitcher ER & K Simulator (Updated) ==
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
@@ -837,8 +836,7 @@ def pitcher_app():
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
-            # P(X ≤ 2 ER)
-            true_prob = round(poisson_cdf(2, lam_er), 4)
+            true_prob = poisson_cdf(2, lam_er)   # fraction
             implied_prob = american_to_prob_local(under_odds)
 
             st.session_state.er_result = {
@@ -852,7 +850,10 @@ def pitcher_app():
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save to Board: U2.5 ER"):
-                    st.session_state.player_board.append({"Market":"ER","Description":f"{er['pitcher']} U2.5 ER","Odds":er["odds"],"True Prob":er["true_prob"]})
+                    st.session_state.player_board.append({
+                        "Market":"ER","Description":f"{er['pitcher']} U2.5 ER",
+                        "Odds":er["odds"],"True %":f"{er['true_prob']*100:.2f}%"
+                    })
                     st.success("Saved.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
@@ -905,7 +906,6 @@ def pitcher_app():
             pK   = estimate_pK(pitcher_k_pct, opp_k_vs_hand, park_factor, ump_factor, recent_factor)
             n_bf = expected_bf(expected_ip_k)
 
-            # P(Over / Under strikeouts)
             k_under = int(_m.floor(k_line_v))
             k_over  = k_under + 1
 
@@ -930,6 +930,7 @@ def pitcher_app():
                 if st.button("🌍 Add to Global Parlay: Under K"):
                     add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"])
                     st.success("Added Under leg.")
+
 
 # =====================================================
 # ================ MODULE: NBA Simulator ==============
