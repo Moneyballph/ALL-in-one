@@ -609,8 +609,7 @@ def ats_totals_app():
                 with colB:
                     st.caption(f"True {selected['True %']:.1f}% | Odds {int(selected['Odds'])}")
 # =====================================================
-# ============ MODULE: MLB HIT SIMULATOR ===============
-# (Fully restored with ERA, WHIP, and K/9 adjustments)
+# ======== MODULE: MLB HIT SIMULATOR (Updated) ========
 # =====================================================
 def mlb_hits_app():
     st.header("⚾ Moneyball Phil: Hit Probability Simulator")
@@ -628,8 +627,7 @@ def mlb_hits_app():
 
     def _to_float(txt: str, *, allow_empty=False, default=0.0):
         s = str(txt).strip()
-        if allow_empty and s == "":
-            return default
+        if allow_empty and s == "": return default
         return float(s)
 
     def american_to_implied_from_text(txt: str) -> float:
@@ -641,7 +639,7 @@ def mlb_hits_app():
         return round(0.2 * season + 0.3 * last7 + 0.2 * split_ + 0.2 * hand + 0.1 * pitcher, 4)
 
     def binomial_hit_probability(avg, ab=4):
-        return round(1 - (1 - avg) ** ab, 4)
+        return 1 - (1 - avg) ** ab
 
     st.subheader("📥 Player Stat Entry")
     with st.form("player_input"):
@@ -652,7 +650,6 @@ def mlb_hits_app():
         hand_avg_txt    = st.text_input("AVG vs Handedness", placeholder="0.305", key="hand_avg")
         pitcher_avg_txt = st.text_input("AVG vs Pitcher", placeholder="0.270", key="pitcher_avg")
 
-        # 🔥 Restored advanced pitcher factors
         pitcher_era_txt  = st.text_input("Pitcher ERA", placeholder="3.75", key="pitcher_era")
         pitcher_whip_txt = st.text_input("Pitcher WHIP", placeholder="1.20", key="pitcher_whip")
         pitcher_k9_txt   = st.text_input("Pitcher K/9", placeholder="9.3", key="pitcher_k9")
@@ -668,11 +665,9 @@ def mlb_hits_app():
             split_avg   = _to_float(split_avg_txt)
             hand_avg    = _to_float(hand_avg_txt)
             pitcher_avg = _to_float(pitcher_avg_txt)
-
             pitcher_era  = _to_float(pitcher_era_txt)
             pitcher_whip = _to_float(pitcher_whip_txt)
             pitcher_k9   = _to_float(pitcher_k9_txt)
-
             odds_implied = american_to_implied_from_text(odds_txt)
         except Exception as e:
             st.error(f"Input error: {e}")
@@ -680,30 +675,22 @@ def mlb_hits_app():
             # Weighted avg
             weighted_avg = calculate_weighted_avg(season_avg, last7_avg, split_avg, hand_avg, pitcher_avg)
 
-            # 🔥 Apply ERA / WHIP / K9 adjustments
-            if pitcher_era > 4.50:
-                weighted_avg += 0.010
-            elif pitcher_era < 3.00:
-                weighted_avg -= 0.010
+            # ERA / WHIP / K9 adjustments
+            if pitcher_era > 4.50: weighted_avg += 0.010
+            elif pitcher_era < 3.00: weighted_avg -= 0.010
+            if pitcher_whip >= 1.40: weighted_avg += 0.015
+            elif pitcher_whip < 1.10: weighted_avg -= 0.015
+            if pitcher_k9 >= 10.0: weighted_avg -= 0.015
+            elif pitcher_k9 <= 7.0: weighted_avg += 0.010
 
-            if pitcher_whip >= 1.40:
-                weighted_avg += 0.015
-            elif pitcher_whip < 1.10:
-                weighted_avg -= 0.015
-
-            if pitcher_k9 >= 10.0:
-                weighted_avg -= 0.015
-            elif pitcher_k9 <= 7.0:
-                weighted_avg += 0.010
-
-            adj_weighted_avg = round(max(0.0, min(1.0, weighted_avg)), 4)
+            adj_weighted_avg = max(0.0, min(1.0, weighted_avg))
 
             ab_lookup = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.0, 7: 3.8, 8: 3.6, 9: 3.4}
             est_ab = ab_lookup.get(batting_order, 4.0)
 
             true_prob = binomial_hit_probability(adj_weighted_avg, ab=round(est_ab))
-            implied_prob = round(odds_implied, 4)
-            ev = round((true_prob - implied_prob) * 100.0, 1)
+            implied_prob = odds_implied
+            ev = (true_prob - implied_prob) * 100.0
 
             st.session_state.last_player_result = {
                 "id": next_id(), "name": name or "Player",
@@ -713,11 +700,13 @@ def mlb_hits_app():
 
     if st.session_state.last_player_result:
         r = st.session_state.last_player_result
-        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.1f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']}")
-        c1, c2, c3 = st.columns(3)
+        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.2f}% | "
+                   f"Implied: {r['implied_prob']*100:.2f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']}")
+        c1, c2 = st.columns(2)
         with c1:
             if st.button("💾 Save to Board (Hit)"):
-                st.session_state.saved_players.append(r); st.success("Saved to board.")
+                st.session_state.saved_players.append(r)
+                st.success("Saved to board.")
         with c2:
             if st.button("🌍 Add to Global Parlay (Hit)"):
                 try:
@@ -732,8 +721,18 @@ def mlb_hits_app():
     if not st.session_state.saved_players:
         st.info("No saved players yet.")
     else:
-        df = pd.DataFrame(st.session_state.saved_players)
+        df = pd.DataFrame([
+            {
+                "Player": p["name"],
+                "True %": f"{p['true_prob']*100:.2f}%",
+                "Implied %": f"{p['implied_prob']*100:.2f}%",
+                "EV %": f"{p['ev']:.1f}%",
+                "Odds": p["odds_txt"]
+            }
+            for p in st.session_state.saved_players
+        ])
         st.dataframe(df, use_container_width=True)
+
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
