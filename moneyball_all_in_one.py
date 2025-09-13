@@ -400,8 +400,7 @@ def nfl_app():
 
 # =====================================================
 # ============ MODULE: ATS & Totals (v3.5) ============
-# (Fixed MLB inputs + Correct % outputs everywhere
-#  + Inline Lines + Detailed Bet Details Panel)
+# (Restored projections + tier color labels)
 # =====================================================
 def ats_totals_app():
     st.header("📊 Moneyball Phil — ATS & Totals (v3.5)")
@@ -450,11 +449,11 @@ def ats_totals_app():
     def project_scores_base(H_pf: float, H_pa: float, A_pf: float, A_pa: float):
         return (H_pf + A_pa) / 2.0, (A_pf + H_pa) / 2.0
 
-    def tier_label(ev: float):
-        if ev > 20: return "Elite"
-        if ev > 10: return "Strong"
-        if ev > 0: return "Moderate"
-        return "Risky"
+    def tier_label(ev):
+        if ev >= 20: return "🟢 Elite"
+        if ev >= 10: return "🟡 Strong"
+        if ev >= 0: return "🟠 Moderate"
+        return "🔴 Risky"
 
     # ----------------- UI -----------------
     sport = st.selectbox("Select Sport", ["MLB", "NFL", "NBA", "NCAA Football", "NCAA Basketball"])
@@ -568,8 +567,7 @@ def ats_totals_app():
             sd_total *= (1 + auto_vol_used/100.0); sd_margin *= (1 + auto_vol_used/100.0)
             proj_total = home_pts + away_pts
             proj_margin = home_pts - away_pts
-            rows = []
-            inline_summaries = []
+            rows, inline_summaries = [], []
 
             # Spread probs
             if S.spread_line_home < 0:
@@ -603,46 +601,38 @@ def ats_totals_app():
             df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
             st.session_state.results_df = df
 
-            # Inline Summary Lines
+            # Projections + Inline Summaries
             st.subheader("Projected Game Outcome")
-            st.markdown(f"**Projected Home:** {home_pts:.2f} | **Projected Away:** {away_pts:.2f} | **Projected Total:** {proj_total:.2f} | **Projected Margin:** {proj_margin:.2f}")
-            for bet, tp, ip, ev in inline_summaries:
-                tier = tier_label(ev)
-                st.markdown(f"🔵 **{bet} → True {tp:.2f}% | Implied {ip:.2f}% | EV {ev:.2f}% | {tier}**")
+            st.markdown(f"**Projected Home:** {home_pts:.2f} | **Projected Away:** {away_pts:.2f} | "
+                        f"**Projected Total:** {proj_total:.2f} | **Projected Margin:** {proj_margin:.2f}")
 
+            for bet, tp, ip, ev in inline_summaries:
+                st.markdown(f"🔹 **{bet} → True {tp:.2f}% | Implied {ip:.2f}% | EV {ev:.2f}% | {tier_label(ev)}**")
+
+        # Results Table + Details
         if st.session_state.get("results_df") is not None:
             df = st.session_state.results_df
             st.subheader("Bet Results")
             st.dataframe(df, use_container_width=True)
+
             if len(df) > 0:
                 choice = st.selectbox("Select a bet:", options=list(df["Bet Type"]))
                 selected = df[df["Bet Type"] == choice].iloc[0]
+
                 st.subheader("Bet Details")
+                st.markdown(f"Tier: {tier_label(float(selected['EV %'].replace('%','')))}")
 
-                true_val = float(selected["True %"].replace("%",""))
-                implied_val = float(selected["Implied %"].replace("%",""))
-                ev_val = float(selected["EV %"].replace("%",""))
-
-                tier = tier_label(ev_val)
-
-                # Progress Bars
-                st.markdown(f"**Tier: {tier}**")
-                st.progress(min(100, int(true_val)))
-                st.caption(f"True Probability: {true_val:.2f}%")
-
-                st.progress(min(100, int(implied_val)))
-                st.caption(f"Implied Probability: {implied_val:.2f}%")
-
-                st.progress(min(100, int(ev_val+50)))  # shift to visualize EV
-                st.caption(f"EV%: {ev_val:.2f}%")
+                st.progress(float(selected['True %'].replace("%",""))/100.0, text=f"True Probability: {selected['True %']}")
+                st.progress(float(selected['Implied %'].replace("%",""))/100.0, text=f"Implied Probability: {selected['Implied %']}")
+                st.progress((float(selected['EV %'].replace("%",""))+100)/200, text=f"EV%: {selected['EV %']}")
 
                 colA, colB = st.columns(2)
                 with colA:
                     if st.button("💾 Save Straight Bet"):
-                        st.success(f"Saved {selected['Bet Type']} as straight bet")
+                        st.success("Bet saved locally (straight bet).")
                 with colB:
                     if st.button("🌍 Send to Parlay Slip"):
-                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), true_val/100.0)
+                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"].replace("%",""))/100.0)
                         st.success("Added to Global Parlay")
 
 
