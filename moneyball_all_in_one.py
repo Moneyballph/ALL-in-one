@@ -763,21 +763,23 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Final — Safe Keys, No Errors, Explanations, Save/Reset/Parlay)
+# (Final version: projections + tiers + save board)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
 
     import math as _m
 
-    # ---- State ----
-    st.session_state.setdefault("player_board", [])
-    st.session_state.setdefault("er_result", None)
-    st.session_state.setdefault("k_result", None)
+    if "player_board" not in st.session_state: 
+        st.session_state.player_board = []
+    if "er_result" not in st.session_state: 
+        st.session_state.er_result = None
+    if "k_result" not in st.session_state: 
+        st.session_state.k_result = None
 
     PA_PER_INNING = 4.3
 
-    # ---- Helpers ----
+    # --- Helpers ---
     def american_to_prob_local(odds: float) -> float:
         if odds >= 0: return 100.0 / (odds + 100.0)
         return abs(odds) / (abs(odds) + 100.0)
@@ -791,20 +793,28 @@ def pitcher_app():
         if x < 0: raise ValueError("Percentage cannot be negative.")
         return x
 
-    # Poisson (no SciPy)
+    def tier_from_prob(p: float) -> str:
+        if p >= 80: return "🟢 Elite"
+        if p >= 70: return "🟡 Strong"
+        if p >= 60: return "🟠 Moderate"
+        return "🔴 Risky"
+
+    # Poisson pmf/cdf
     def poisson_pmf(k: int, lam: float) -> float:
         try:
             return _m.exp(-lam) * (lam**k) / _m.factorial(k)
         except Exception:
             return 0.0
+
     def poisson_cdf(k: int, lam: float) -> float:
         return sum(poisson_pmf(i, lam) for i in range(0, k+1))
 
-    # Binomial
+    # Binomial helpers
     def binom_pmf(n, k, p):
         if k < 0 or k > n: return 0.0
         return _m.exp(_m.lgamma(n+1) - _m.lgamma(k+1) - _m.lgamma(n-k+1) +
                       k*_m.log(max(p,1e-12)) + (n-k)*_m.log(max(1-p,1e-12)))
+
     def binom_cdf(n, k, p):
         return sum(binom_pmf(n, i, p) for i in range(0, k+1))
 
@@ -813,10 +823,12 @@ def pitcher_app():
         adj = base * park_factor * ump_factor * recent_factor
         return max(0.10, min(0.45, adj))
 
-    # ---- UI ----
+    # --- UI ---
     tabs = st.tabs(["Earned Runs (U2.5)", "Strikeouts (K)"])
 
-    # ================= TAB 1: Earned Runs =================
+    # ---------------------------
+    # Tab 1: Earned Runs
+    # ---------------------------
     with tabs[0]:
         with st.form("er_form_glob"):
             c1, c2 = st.columns(2)
@@ -831,11 +843,13 @@ def pitcher_app():
                 er_lgops = st.text_input("League Average OPS", key="er_lgops")
                 er_ballpark = st.selectbox("Ballpark Factor", ["Neutral","Pitcher-Friendly","Hitter-Friendly"], key="er_ballpark")
                 er_under_odds = st.text_input("Sportsbook Odds (U2.5 ER)", key="er_under_odds")
-            simulate_er = st.form_submit_button("▶ Simulate Player")
-            reset_er    = st.form_submit_button("🔄 Reset Form")
+            cbtn1, cbtn2 = st.columns(2)
+            simulate_er = cbtn1.form_submit_button("▶ Simulate Player")
+            reset_er = cbtn2.form_submit_button("Reset Form")
 
         if reset_er:
-            st.session_state.er_result = None
+            for k in ["er_pitcher","er_era","er_total_ip","er_games","er_last3","er_oppops","er_lgops","er_ballpark","er_under_odds"]:
+                if k in st.session_state: del st.session_state[k]
             st.rerun()
 
         if simulate_er:
@@ -855,142 +869,170 @@ def pitcher_app():
                 st.error("Enter valid numerics for ERA/IP/OPS and odds.")
                 st.stop()
 
-            base_ip   = total_ip / max(1, games_started)
-            park_adj  = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
+            base_ip = total_ip / max(1, games_started)
+            park_adj = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
             expected_ip = round(((base_ip + trend_ip) / 2) + park_adj, 2)
 
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
-            lam_er       = round(adjusted_era * (expected_ip / 9), 3)
-            projected_ERs = round(lam_er, 2)
+            lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
-            true_prob    = round(poisson_cdf(2, lam_er) * 100, 2)
-            implied_prob = round(american_to_prob_local(under_odds) * 100, 2)
+            # P(X ≤ 2 ER)
+            true_prob = round(poisson_cdf(2, lam_er) * 100, 2)   # %
+            implied_prob = american_to_prob_local(under_odds) * 100
+            tier = tier_from_prob(true_prob)
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
-                "lam_er": lam_er, "adjusted_era": adjusted_era,
-                "projected_ers": projected_ERs,
+                "adjusted_era": adjusted_era, "lambda_er": lam_er,
                 "true_prob": true_prob, "implied_prob": implied_prob,
-                "odds": under_odds
+                "tier": tier, "odds": under_odds
             }
 
         er = st.session_state.er_result
         if er:
-            st.subheader("📊 Earned Runs Projection Explanation")
-            st.markdown(f"- **Expected IP:** {er.get('expected_ip','—')} innings")
-            st.markdown(f"- **Adjusted ERA vs Opponent:** {er.get('adjusted_era','—')}")
-            st.markdown(f"- **λ (expected ER):** {er.get('lam_er','—')}")
-            st.markdown(f"- **Projected Earned Runs (expected ERs):** {er.get('projected_ers','—')}")
-            st.markdown(f"- **True Probability U2.5 ER:** {er.get('true_prob','—')}%")
-            st.markdown(f"- **Implied Probability (Odds):** {er.get('implied_prob','—')}%")
-
-            st.success(f"{er.get('pitcher','Pitcher')} — U2.5 ER True {er.get('true_prob','—')}% | Odds {int(er.get('odds',0))}")
-            c1, c2, c3 = st.columns(3)
+            st.subheader("📊 ER Simulation Results")
+            st.markdown(f"**Expected IP:** {er['expected_ip']} innings")
+            st.markdown(f"**Adjusted ERA vs Opponent:** {er['adjusted_era']}")
+            st.markdown(f"**Expected ER (λ):** {er['lambda_er']}")
+            st.markdown(f"**True Probability U2.5 ER:** {er['true_prob']:.2f}%")
+            st.markdown(f"**Implied Probability (from Odds):** {er['implied_prob']:.2f}%")
+            st.markdown(f"**Difficulty Tier:** {er['tier']}")
+            c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save to Board: U2.5 ER"):
-                    st.session_state.player_board.append(
-                        {"Market":"ER","Description":f"{er.get('pitcher','Pitcher')} U2.5 ER",
-                         "Odds":er.get("odds","—"),"True Prob":f"{er.get('true_prob','—')}%"})
+                    st.session_state.player_board.append({
+                        "Market":"ER","Description":f"{er['pitcher']} U2.5 ER",
+                        "Odds":er["odds"],"True Prob":f"{er['true_prob']:.2f}%",
+                        "EV":"—","Tier":er["tier"]
+                    })
                     st.success("Saved.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
-                    add_to_global_parlay("Pitcher", f"{er.get('pitcher','Pitcher')} U2.5 ER", er.get("odds",0), er.get("true_prob",0)/100.0)
+                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100)
                     st.success("Added to Global Parlay")
-            with c3:
-                if st.button("🗑️ Clear Result (ER)"):
-                    st.session_state.er_result = None
-                    st.rerun()
 
-    # ================= TAB 2: Strikeouts =================
+    # ---------------------------
+    # Tab 2: Strikeouts
+    # ---------------------------
     with tabs[1]:
         with st.form("k_form_glob"):
             c1, c2, c3 = st.columns(3)
             with c1:
                 k_pitcher_name = st.text_input("Pitcher Name (K)", key="k_pitcher_name")
-                k_total_ip     = st.text_input("Total Innings Pitched (season)", key="k_total_ip")
-                k_games_started= st.number_input("Games Started (season)", value=17, step=1, key="k_games_started")
-                k_last3        = st.text_input("Last 3 Game IP (e.g., 5.2,6.1,5.0)", key="k_last3")
+                k_total_ip = st.text_input("Total Innings Pitched (season)", key="k_total_ip")
+                k_games_started = st.number_input("Games Started (season)", value=17, step=1, key="k_games_started")
+                k_last3 = st.text_input("Last 3 Game IP (e.g., 5.2,6.1,5.0)", key="k_last3")
             with c2:
-                k_pct       = st.text_input("Pitcher K% (24.3 or 0.243)", key="k_pct")
-                k_opp_pct   = st.text_input("Opponent K% vs Hand (23.0 or 0.23)", key="k_opp_pct")
-                k_line      = st.text_input("K Line (e.g., 5.5)", key="k_line")
+                k_pct = st.text_input("Pitcher K% (24.3 or 0.243)", key="k_pct")
+                k_opp_pct = st.text_input("Opponent K% vs Hand (23.0 or 0.23)", key="k_opp_pct")
+                k_line = st.text_input("K Line (e.g., 5.5)", key="k_line")
             with c3:
                 k_odds_over = st.text_input("Over Odds (American)", key="k_odds_over")
-                k_odds_under= st.text_input("Under Odds (American)", key="k_odds_under")
-                k_park      = st.text_input("Park Factor (K)", value="1.00", key="k_park")
-                k_ump       = st.text_input("Ump Factor (K)", value="1.00", key="k_ump")
-                k_recent    = st.text_input("Recent Form Factor", value="1.00", key="k_recent")
-            calc_k  = st.form_submit_button("▶ Calculate Strikeouts")
-            reset_k = st.form_submit_button("🔄 Reset Form")
+                k_odds_under = st.text_input("Under Odds (American)", key="k_odds_under")
+                k_park = st.text_input("Park Factor (K)", value="1.00", key="k_park")
+                k_ump = st.text_input("Ump Factor (K)", value="1.00", key="k_ump")
+                k_recent = st.text_input("Recent Form Factor", value="1.00", key="k_recent")
+            cbtn1, cbtn2 = st.columns(2)
+            calc_k = cbtn1.form_submit_button("▶ Calculate Strikeouts")
+            reset_k = cbtn2.form_submit_button("Reset Form")
 
         if reset_k:
-            st.session_state.k_result = None
+            for k in ["k_pitcher_name","k_total_ip","k_games_started","k_last3","k_pct","k_opp_pct","k_line","k_odds_over","k_odds_under","k_park","k_ump","k_recent"]:
+                if k in st.session_state: del st.session_state[k]
             st.rerun()
 
         if calc_k:
             try:
-                k_pitcher       = k_pitcher_name or "Pitcher"
-                total_ip_k      = float(k_total_ip); games_started_k = int(k_games_started)
-                last_3_ip_k     = k_last3
-                pitcher_k_pct   = parse_pct(k_pct); opp_k_vs_hand = parse_pct(k_opp_pct)
-                k_line_v        = float(k_line)
-                odds_over_f     = float(str(k_odds_over).replace("+",""))
-                odds_under_f    = float(str(k_odds_under).replace("+",""))
-                park_factor     = float(k_park); ump_factor = float(k_ump); recent_factor = float(k_recent)
-                ip_values_k     = [float(i.strip()) for i in last_3_ip_k.split(",") if i.strip()]
-                trend_ip_k      = sum(ip_values_k) / len(ip_values_k)
+                k_pitcher = k_pitcher_name or "Pitcher"
+                total_ip_k = float(k_total_ip); games_started_k = int(k_games_started)
+                last_3_ip_k = k_last3
+                pitcher_k_pct = parse_pct(k_pct); opp_k_vs_hand = parse_pct(k_opp_pct)
+                k_line_v = float(k_line)
+                odds_over_f = float(str(k_odds_over).replace("+",""))
+                odds_under_f = float(str(k_odds_under).replace("+",""))
+                park_factor = float(k_park); ump_factor = float(k_ump); recent_factor = float(k_recent)
+                ip_values_k = [float(i.strip()) for i in last_3_ip_k.split(",") if i.strip()]
+                trend_ip_k  = sum(ip_values_k) / len(ip_values_k)
             except Exception as e:
                 st.error(f"Bad input: {e}")
                 st.stop()
 
-            base_ip_k     = total_ip_k / max(1, games_started_k)
+            base_ip_k = total_ip_k / max(1, games_started_k)
             expected_ip_k = round(((base_ip_k + trend_ip_k) / 2), 2)
-
             pK   = estimate_pK(pitcher_k_pct, opp_k_vs_hand, park_factor, ump_factor, recent_factor)
             n_bf = expected_bf(expected_ip_k)
-            expected_Ks = round(n_bf * pK, 2)
 
             k_under = int(_m.floor(k_line_v))
             k_over  = k_under + 1
-
             p_under = binom_cdf(n_bf, k_under, pK) * 100
             p_over  = (1.0 - binom_cdf(n_bf, k_over-1, pK)) * 100
+            expected_ks = round(n_bf * pK, 2)
+            over_tier = tier_from_prob(p_over)
+            under_tier = tier_from_prob(p_under)
 
             st.session_state.k_result = {
                 "pitcher": k_pitcher, "expected_ip": expected_ip_k, "n_bf": n_bf, "pK": pK,
-                "expected_Ks": expected_Ks,
-                "k_line": k_line_v, "p_over": p_over, "p_under": p_under,
-                "odds_over": odds_over_f, "odds_under": odds_under_f
+                "expected_ks": expected_ks, "k_line": k_line_v,
+                "p_over": p_over, "p_under": p_under,
+                "odds_over": odds_over_f, "odds_under": odds_under_f,
+                "over_tier": over_tier, "under_tier": under_tier
             }
 
         kr = st.session_state.k_result
         if kr:
-            st.subheader("📊 Strikeouts Projection Explanation")
-            st.markdown(f"- **Expected IP:** {kr.get('expected_ip','—')} innings")
-            st.markdown(f"- **Estimated Batters Faced (BF):** {kr.get('n_bf','—')} (PA/IP = {PA_PER_INNING})")
-            if 'pK' in kr: st.markdown(f"- **Per-PA Strikeout Probability (pK):** {kr['pK']:.3f}")
-            if 'expected_Ks' in kr: st.markdown(f"- **Projected Strikeouts (expected Ks):** {kr['expected_Ks']}")
-            st.markdown(f"- **K Line:** {kr.get('k_line','—')}")
-            if 'p_over' in kr and 'p_under' in kr:
-                st.markdown(f"- **True Over %:** {kr['p_over']:.2f}% | **True Under %:** {kr['p_under']:.2f}%")
-
-            st.success(f"{kr.get('pitcher','Pitcher')} — K {kr.get('k_line','—')}  |  Over {kr.get('p_over','—')}%  /  Under {kr.get('p_under','—')}%")
-            c1, c2, c3 = st.columns(3)
+            st.subheader("📊 Strikeout Simulation Results")
+            st.markdown(f"**Expected IP:** {kr['expected_ip']} innings")
+            st.markdown(f"**Estimated Batters Faced (BF):** {kr['n_bf']}  (PA/IP = {PA_PER_INNING})")
+            st.markdown(f"**Per-PA Strikeout Probability (pK):** {kr['pK']:.3f}")
+            st.markdown(f"**Expected Strikeouts (mean Ks):** {kr['expected_ks']}")
+            st.markdown(f"**Over True %:** {kr['p_over']:.2f}% · Tier: {kr['over_tier']}")
+            st.markdown(f"**Under True %:** {kr['p_under']:.2f}% · Tier: {kr['under_tier']}")
+            c1, c2 = st.columns(2)
             with c1:
-                if st.button("💾 Save to Board: K Props"):
-                    st.session_state.player_board.append(
-                        {"Market":"K","Description":f"{kr.get('pitcher','Pitcher')} K {kr.get('k_line','—')}",
-                         "Odds":f"O{kr.get('odds_over','—')}/U{kr.get('odds_under','—')}",
-                         "True Prob":f"O{kr.get('p_over','—')}% / U{kr.get('p_under','—')}%"})
-                    st.success("Saved.")
+                if st.button("💾 Save to Board: Over K"):
+                    st.session_state.player_board.append({
+                        "Market":"K","Description":f"{kr['pitcher']} O{kr['k_line']} K",
+                        "Odds":kr["odds_over"],"True Prob":f"{kr['p_over']:.2f}%",
+                        "EV":"—","Tier":kr["over_tier"]
+                    })
+                    st.success("Saved Over.")
             with c2:
-                if st.button("🌍 Add to Global Parlay: Over K"):
-                    add_to_global_parlay("Pitcher", f"{kr.get('pitcher','Pitcher')} O{kr.get('k_line','—')} K", kr.get("odds_over",0), kr.get("p_over",0)/100.0)
-                    st.success("Added Over leg.")
+                if st.button("💾 Save to Board: Under K"):
+                    st.session_state.player_board.append({
+                        "Market":"K","Description":f"{kr['pitcher']} U{kr['k_line']} K",
+                        "Odds":kr["odds_under"],"True Prob":f"{kr['p_under']:.2f}%",
+                        "EV":"—","Tier":kr["under_tier"]
+                    })
+                    st.success("Saved Under.")
+            c3, c4 = st.columns(2)
             with c3:
+                if st.button("🌍 Add to Global Parlay: Over K"):
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"]/100)
+                    st.success("Added Over leg.")
+            with c4:
                 if st.button("🌍 Add to Global Parlay: Under K"):
-                    add_to_global_parlay("Pitcher", f"{kr.get('pitcher','Pitcher')} U{kr.get('k_line','—')} K", kr.get("odds_under",0), kr.get("p_under",0)/100.0)
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100)
                     st.success("Added Under leg.")
+
+    # ================= Saved Pitcher Board =================
+    st.markdown("---")
+    st.header("📌 Saved Pitcher Board")
+    if not st.session_state.player_board:
+        st.info("No pitcher props saved yet.")
+    else:
+        df = pd.DataFrame([
+            {
+                "Market": p.get("Market","—"),
+                "Description": p.get("Description","—"),
+                "Odds": p.get("Odds","—"),
+                "True Prob": p.get("True Prob","—"),
+                "EV": p.get("EV","—"),
+                "Tier": p.get("Tier","—")
+            }
+            for p in st.session_state.player_board
+        ])
+        st.dataframe(df, use_container_width=True)
+
 
 
 
