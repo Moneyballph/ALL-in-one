@@ -984,7 +984,7 @@ def pitcher_app():
             st.markdown(f"**Expected IP:** {kr['expected_ip']} innings")
             st.markdown(f"**Estimated Batters Faced (BF):** {kr['n_bf']}  (PA/IP = {PA_PER_INNING})")
             st.markdown(f"**Per-PA Strikeout Probability (pK):** {kr['pK']:.3f}")
-            st.markdown(f"**Expected Strikeouts (mean Ks):** {kr['expected_ks']}")
+            st.markdown(f"**Expected Strikeouts (mean Ks):** {kr.get('expected_ks','—')}")
             st.markdown(f"**Over True %:** {kr['p_over']:.2f}% · Tier: {kr['over_tier']}")
             st.markdown(f"**Under True %:** {kr['p_under']:.2f}% · Tier: {kr['under_tier']}")
             c1, c2 = st.columns(2)
