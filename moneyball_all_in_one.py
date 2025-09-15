@@ -771,16 +771,14 @@ def pitcher_app():
 
     import math as _m
 
-    if "player_board" not in st.session_state: 
-        st.session_state.player_board = []
-    if "er_result" not in st.session_state: 
-        st.session_state.er_result = None
-    if "k_result" not in st.session_state: 
-        st.session_state.k_result = None
+    # ---- State ----
+    st.session_state.setdefault("player_board", [])
+    st.session_state.setdefault("er_result", None)
+    st.session_state.setdefault("k_result", None)
 
     PA_PER_INNING = 4.3
 
-    # --- Helpers ---
+    # ---- Helpers ----
     def american_to_prob_local(odds: float) -> float:
         if odds >= 0: return 100.0 / (odds + 100.0)
         return abs(odds) / (abs(odds) + 100.0)
@@ -794,22 +792,20 @@ def pitcher_app():
         if x < 0: raise ValueError("Percentage cannot be negative.")
         return x
 
-    # Poisson functions (no SciPy needed)
+    # Poisson (no SciPy)
     def poisson_pmf(k: int, lam: float) -> float:
         try:
             return _m.exp(-lam) * (lam**k) / _m.factorial(k)
         except Exception:
             return 0.0
-
     def poisson_cdf(k: int, lam: float) -> float:
         return sum(poisson_pmf(i, lam) for i in range(0, k+1))
 
-    # Binomial helpers
+    # Binomial
     def binom_pmf(n, k, p):
         if k < 0 or k > n: return 0.0
         return _m.exp(_m.lgamma(n+1) - _m.lgamma(k+1) - _m.lgamma(n-k+1) +
                       k*_m.log(max(p,1e-12)) + (n-k)*_m.log(max(1-p,1e-12)))
-
     def binom_cdf(n, k, p):
         return sum(binom_pmf(n, i, p) for i in range(0, k+1))
 
@@ -818,12 +814,10 @@ def pitcher_app():
         adj = base * park_factor * ump_factor * recent_factor
         return max(0.10, min(0.45, adj))
 
-    # --- UI ---
+    # ---- UI ----
     tabs = st.tabs(["Earned Runs (U2.5)", "Strikeouts (K)"])
 
-    # ---------------------------
-    # Tab 1: Earned Runs
-    # ---------------------------
+    # ================= TAB 1: Earned Runs =================
     with tabs[0]:
         with st.form("er_form_glob"):
             c1, c2 = st.columns(2)
@@ -839,9 +833,12 @@ def pitcher_app():
                 er_ballpark = st.selectbox("Ballpark Factor", ["Neutral","Pitcher-Friendly","Hitter-Friendly"], key="er_ballpark")
                 er_under_odds = st.text_input("Sportsbook Odds (U2.5 ER)", key="er_under_odds")
             simulate_er = st.form_submit_button("▶ Simulate Player")
-            reset_er = st.form_submit_button("🔄 Reset Form")
+            reset_er    = st.form_submit_button("🔄 Reset Form")
 
         if reset_er:
+            # Clear inputs + result
+            for k in ["er_pitcher","er_era","er_total_ip","er_games","er_last3","er_oppops","er_lgops","er_ballpark","er_under_odds"]:
+                if k in st.session_state: st.session_state.pop(k)
             st.session_state.er_result = None
             st.rerun()
 
@@ -856,26 +853,27 @@ def pitcher_app():
                 league_avg_ops = float(er_lgops)
                 ballpark       = er_ballpark
                 under_odds     = float(str(er_under_odds).replace("+",""))
-
                 ip_values = [float(i.strip()) for i in last_3_ip.split(",") if i.strip()]
                 trend_ip  = sum(ip_values) / len(ip_values)
             except Exception:
                 st.error("Enter valid numerics for ERA/IP/OPS and odds.")
                 st.stop()
 
-            base_ip = total_ip / max(1, games_started)
-            park_adj = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
+            base_ip   = total_ip / max(1, games_started)
+            park_adj  = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
             expected_ip = round(((base_ip + trend_ip) / 2) + park_adj, 2)
 
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
-            lam_er = round(adjusted_era * (expected_ip / 9), 3)
+            lam_er       = round(adjusted_era * (expected_ip / 9), 3)
+            projected_ERs = round(lam_er, 2)  # projected (expected) ERs
 
-            true_prob = round(poisson_cdf(2, lam_er) * 100, 2)
-            implied_prob = american_to_prob_local(under_odds) * 100
+            true_prob    = round(poisson_cdf(2, lam_er) * 100, 2)
+            implied_prob = round(american_to_prob_local(under_odds) * 100, 2)
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
                 "lam_er": lam_er, "adjusted_era": adjusted_era,
+                "projected_ers": projected_ERs,
                 "true_prob": true_prob, "implied_prob": implied_prob,
                 "odds": under_odds
             }
@@ -886,8 +884,10 @@ def pitcher_app():
             st.markdown(f"- **Expected IP:** {er['expected_ip']} innings")
             st.markdown(f"- **Adjusted ERA vs Opponent:** {er['adjusted_era']}")
             st.markdown(f"- **λ (expected ER):** {er['lam_er']}")
+            st.markdown(f"- **Projected Earned Runs (expected ERs):** {er['projected_ers']}")
             st.markdown(f"- **True Probability U2.5 ER:** {er['true_prob']:.2f}%")
             st.markdown(f"- **Implied Probability (Odds):** {er['implied_prob']:.2f}%")
+
             st.success(f"{er['pitcher']} — U2.5 ER True {er['true_prob']:.2f}% | Odds {int(er['odds'])}")
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -898,63 +898,64 @@ def pitcher_app():
                     st.success("Saved.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
-                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100)
+                    add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100.0)
                     st.success("Added to Global Parlay")
             with c3:
                 if st.button("🗑️ Clear Result (ER)"):
                     st.session_state.er_result = None
                     st.rerun()
 
-    # ---------------------------
-    # Tab 2: Strikeouts
-    # ---------------------------
+    # ================= TAB 2: Strikeouts =================
     with tabs[1]:
         with st.form("k_form_glob"):
             c1, c2, c3 = st.columns(3)
             with c1:
                 k_pitcher_name = st.text_input("Pitcher Name (K)", key="k_pitcher_name")
-                k_total_ip = st.text_input("Total Innings Pitched (season)", key="k_total_ip")
-                k_games_started = st.number_input("Games Started (season)", value=17, step=1, key="k_games_started")
-                k_last3 = st.text_input("Last 3 Game IP (e.g., 5.2,6.1,5.0)", key="k_last3")
+                k_total_ip     = st.text_input("Total Innings Pitched (season)", key="k_total_ip")
+                k_games_started= st.number_input("Games Started (season)", value=17, step=1, key="k_games_started")
+                k_last3        = st.text_input("Last 3 Game IP (e.g., 5.2,6.1,5.0)", key="k_last3")
             with c2:
-                k_pct = st.text_input("Pitcher K% (24.3 or 0.243)", key="k_pct")
-                k_opp_pct = st.text_input("Opponent K% vs Hand (23.0 or 0.23)", key="k_opp_pct")
-                k_line = st.text_input("K Line (e.g., 5.5)", key="k_line")
+                k_pct       = st.text_input("Pitcher K% (24.3 or 0.243)", key="k_pct")
+                k_opp_pct   = st.text_input("Opponent K% vs Hand (23.0 or 0.23)", key="k_opp_pct")
+                k_line      = st.text_input("K Line (e.g., 5.5)", key="k_line")
             with c3:
                 k_odds_over = st.text_input("Over Odds (American)", key="k_odds_over")
-                k_odds_under = st.text_input("Under Odds (American)", key="k_odds_under")
-                k_park = st.text_input("Park Factor (K)", value="1.00", key="k_park")
-                k_ump = st.text_input("Ump Factor (K)", value="1.00", key="k_ump")
-                k_recent = st.text_input("Recent Form Factor", value="1.00", key="k_recent")
-            calc_k = st.form_submit_button("▶ Calculate Strikeouts")
+                k_odds_under= st.text_input("Under Odds (American)", key="k_odds_under")
+                k_park      = st.text_input("Park Factor (K)", value="1.00", key="k_park")
+                k_ump       = st.text_input("Ump Factor (K)", value="1.00", key="k_ump")
+                k_recent    = st.text_input("Recent Form Factor", value="1.00", key="k_recent")
+            calc_k  = st.form_submit_button("▶ Calculate Strikeouts")
             reset_k = st.form_submit_button("🔄 Reset Form")
 
         if reset_k:
+            for k in ["k_pitcher_name","k_total_ip","k_games_started","k_last3","k_pct","k_opp_pct",
+                      "k_line","k_odds_over","k_odds_under","k_park","k_ump","k_recent"]:
+                if k in st.session_state: st.session_state.pop(k)
             st.session_state.k_result = None
             st.rerun()
 
         if calc_k:
             try:
-                k_pitcher = k_pitcher_name or "Pitcher"
-                total_ip_k = float(k_total_ip); games_started_k = int(k_games_started)
-                last_3_ip_k = k_last3
-                pitcher_k_pct = parse_pct(k_pct); opp_k_vs_hand = parse_pct(k_opp_pct)
-                k_line_v = float(k_line)
-                odds_over_f = float(str(k_odds_over).replace("+",""))
-                odds_under_f = float(str(k_odds_under).replace("+",""))
-                park_factor = float(k_park); ump_factor = float(k_ump); recent_factor = float(k_recent)
-
-                ip_values_k = [float(i.strip()) for i in last_3_ip_k.split(",") if i.strip()]
-                trend_ip_k  = sum(ip_values_k) / len(ip_values_k)
+                k_pitcher       = k_pitcher_name or "Pitcher"
+                total_ip_k      = float(k_total_ip); games_started_k = int(k_games_started)
+                last_3_ip_k     = k_last3
+                pitcher_k_pct   = parse_pct(k_pct); opp_k_vs_hand = parse_pct(k_opp_pct)
+                k_line_v        = float(k_line)
+                odds_over_f     = float(str(k_odds_over).replace("+",""))
+                odds_under_f    = float(str(k_odds_under).replace("+",""))
+                park_factor     = float(k_park); ump_factor = float(k_ump); recent_factor = float(k_recent)
+                ip_values_k     = [float(i.strip()) for i in last_3_ip_k.split(",") if i.strip()]
+                trend_ip_k      = sum(ip_values_k) / len(ip_values_k)
             except Exception as e:
                 st.error(f"Bad input: {e}")
                 st.stop()
 
-            base_ip_k = total_ip_k / max(1, games_started_k)
+            base_ip_k     = total_ip_k / max(1, games_started_k)
             expected_ip_k = round(((base_ip_k + trend_ip_k) / 2), 2)
 
             pK   = estimate_pK(pitcher_k_pct, opp_k_vs_hand, park_factor, ump_factor, recent_factor)
             n_bf = expected_bf(expected_ip_k)
+            expected_Ks = round(n_bf * pK, 2)  # projected (expected) Ks
 
             k_under = int(_m.floor(k_line_v))
             k_over  = k_under + 1
@@ -964,6 +965,7 @@ def pitcher_app():
 
             st.session_state.k_result = {
                 "pitcher": k_pitcher, "expected_ip": expected_ip_k, "n_bf": n_bf, "pK": pK,
+                "expected_Ks": expected_Ks,
                 "k_line": k_line_v, "p_over": p_over, "p_under": p_under,
                 "odds_over": odds_over_f, "odds_under": odds_under_f
             }
@@ -974,6 +976,7 @@ def pitcher_app():
             st.markdown(f"- **Expected IP:** {kr['expected_ip']} innings")
             st.markdown(f"- **Estimated Batters Faced (BF):** {kr['n_bf']} (PA/IP = {PA_PER_INNING})")
             st.markdown(f"- **Per-PA Strikeout Probability (pK):** {kr['pK']:.3f}")
+            st.markdown(f"- **Projected Strikeouts (expected Ks):** {kr['expected_Ks']}")
             st.markdown(f"- **K Line:** {kr['k_line']}")
             st.markdown(f"- **True Over %:** {kr['p_over']:.2f}% | **True Under %:** {kr['p_under']:.2f}%")
 
@@ -988,11 +991,11 @@ def pitcher_app():
                     st.success("Saved.")
             with c2:
                 if st.button("🌍 Add to Global Parlay: Over K"):
-                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"]/100)
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} O{kr['k_line']} K", kr["odds_over"], kr["p_over"]/100.0)
                     st.success("Added Over leg.")
             with c3:
                 if st.button("🌍 Add to Global Parlay: Under K"):
-                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100)
+                    add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100.0)
                     st.success("Added Under leg.")
 
 
