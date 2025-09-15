@@ -764,10 +764,8 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Explanations + Save to Board + Reset buttons)
+# (Final — No SciPy, Explanations, Save/Reset/Parlay)
 # =====================================================
-from scipy.stats import poisson   # ✅ needed for ER distribution
-
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
 
@@ -795,6 +793,16 @@ def pitcher_app():
         if x > 1.0: x = x / 100.0
         if x < 0: raise ValueError("Percentage cannot be negative.")
         return x
+
+    # Poisson functions (no SciPy needed)
+    def poisson_pmf(k: int, lam: float) -> float:
+        try:
+            return _m.exp(-lam) * (lam**k) / _m.factorial(k)
+        except Exception:
+            return 0.0
+
+    def poisson_cdf(k: int, lam: float) -> float:
+        return sum(poisson_pmf(i, lam) for i in range(0, k+1))
 
     # Binomial helpers
     def binom_pmf(n, k, p):
@@ -862,7 +870,7 @@ def pitcher_app():
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
-            true_prob = round((poisson.pmf(0, lam_er) + poisson.pmf(1, lam_er) + poisson.pmf(2, lam_er)) * 100, 2)
+            true_prob = round(poisson_cdf(2, lam_er) * 100, 2)
             implied_prob = american_to_prob_local(under_odds) * 100
 
             st.session_state.er_result = {
