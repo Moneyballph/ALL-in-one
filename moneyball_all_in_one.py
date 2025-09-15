@@ -1020,24 +1020,23 @@ def pitcher_app():
                     add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100)
                     st.success("Added Under leg.")
 
-    # ================= Saved Pitcher Board =================
-    st.markdown("---")
-    st.header("📌 Saved Pitcher Board")
-    if not st.session_state.player_board:
-        st.info("No pitcher props saved yet.")
-    else:
-        df = pd.DataFrame([
-            {
-                "Market": p.get("Market","—"),
-                "Description": p.get("Description","—"),
-                "Odds": p.get("Odds","—"),
-                "True Prob": p.get("True Prob","—"),
-                "EV": p.get("EV","—"),
-                "Tier": p.get("Tier","—")
-            }
-            for p in st.session_state.player_board
-        ])
-        st.dataframe(df, use_container_width=True)
+st.markdown("---")
+st.header("📌 Saved Pitcher Board")
+if not st.session_state.player_board:
+    st.info("No pitcher props saved yet.")
+else:
+    for idx, p in enumerate(st.session_state.player_board):
+        cols = st.columns([3, 2, 2, 2, 2, 1])
+        cols[0].markdown(f"**{p.get('Market','—')}** — {p.get('Description','—')}")
+        cols[1].write(f"Odds: {p.get('Odds','—')}")
+        cols[2].write(f"True Prob: {p.get('True Prob','—')}")
+        cols[3].write(f"EV: {p.get('EV','—')}")
+        cols[4].write(f"Tier: {p.get('Tier','—')}")
+        with cols[5]:
+            if st.button("🗑️", key=f"del_pitch_{idx}"):
+                st.session_state.player_board.pop(idx)
+                st.rerun()
+
 
 
 
