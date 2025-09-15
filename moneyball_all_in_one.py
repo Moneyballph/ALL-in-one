@@ -764,12 +764,13 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Fixed formatting to show % instead of decimals)
+# (With Explanations for ER and Strikeouts)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
 
     import math as _m
+    from scipy.stats import poisson
 
     if "player_board" not in st.session_state: 
         st.session_state.player_board = []
@@ -794,17 +795,6 @@ def pitcher_app():
         if x < 0: raise ValueError("Percentage cannot be negative.")
         return x
 
-    # Poisson pmf/cdf
-    def poisson_pmf(k: int, lam: float) -> float:
-        try:
-            return _m.exp(-lam) * (lam**k) / _m.factorial(k)
-        except Exception:
-            return 0.0
-
-    def poisson_cdf(k: int, lam: float) -> float:
-        return sum(poisson_pmf(i, lam) for i in range(0, k+1))
-
-    # Binomial helpers
     def binom_pmf(n, k, p):
         if k < 0 or k > n: return 0.0
         return _m.exp(_m.lgamma(n+1) - _m.lgamma(k+1) - _m.lgamma(n-k+1) +
@@ -865,8 +855,22 @@ def pitcher_app():
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
+            # ---------------- Explanations Block ----------------
+            st.markdown("### 🔍 Projection Breakdown")
+            st.write(f"- **Base IP (season avg):** {base_ip:.2f} innings "
+                     f"(Total IP {total_ip} ÷ Games {games_started})")
+            st.write(f"- **Trend IP (last 3):** {trend_ip:.2f} innings "
+                     f"(from {last_3_ip})")
+            st.write(f"- **Expected IP (blend + park adj):** {expected_ip:.2f} innings "
+                     f"(blend of season avg + recent trend, adj {park_adj:+.2f})")
+            st.write(f"- **Adjusted ERA:** {adjusted_era:.2f} "
+                     f"(scaled by Opp OPS {opponent_ops} ÷ Lg OPS {league_avg_ops})")
+            st.write(f"- **Lambda ER:** {lam_er:.2f} "
+                     f"(Adjusted ERA × Expected IP ÷ 9)")
+            st.markdown("---")
+
             # P(X ≤ 2 ER)
-            true_prob = round(poisson_cdf(2, lam_er) * 100, 2)   # now % format
+            true_prob = round(poisson.cdf(2, lam_er) * 100, 2)
             implied_prob = american_to_prob_local(under_odds) * 100
 
             st.session_state.er_result = {
@@ -939,6 +943,18 @@ def pitcher_app():
             p_under = binom_cdf(n_bf, k_under, pK) * 100
             p_over  = (1.0 - binom_cdf(n_bf, k_over-1, pK)) * 100
 
+            # ---------------- Explanations Block ----------------
+            st.markdown("### 🔍 Projection Breakdown")
+            st.write(f"- **Base IP (season avg):** {base_ip_k:.2f} innings "
+                     f"(Total IP {total_ip_k} ÷ Games {games_started_k})")
+            st.write(f"- **Trend IP (last 3):** {trend_ip_k:.2f} innings "
+                     f"(from {last_3_ip_k})")
+            st.write(f"- **Expected IP (blend):** {expected_ip_k:.2f} innings")
+            st.write(f"- **Estimated Batters Faced (BF):** {n_bf} (IP × {PA_PER_INNING})")
+            st.write(f"- **Per-PA Strikeout Probability (pK):** {pK:.3f}")
+            st.write(f"- **K Line Used:** {k_line_v}")
+            st.markdown("---")
+
             st.session_state.k_result = {
                 "pitcher": k_pitcher, "k_line": k_line_v,
                 "p_over": p_over, "p_under": p_under,
@@ -957,6 +973,7 @@ def pitcher_app():
                 if st.button("🌍 Add to Global Parlay: Under K"):
                     add_to_global_parlay("Pitcher", f"{kr['pitcher']} U{kr['k_line']} K", kr["odds_under"], kr["p_under"]/100)
                     st.success("Added Under leg.")
+
 
 
 # =====================================================
