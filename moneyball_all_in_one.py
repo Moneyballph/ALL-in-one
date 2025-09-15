@@ -763,7 +763,7 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Final version: projections + tiers + save board)
+# (Final version: projections + tiers + EV + save board)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
@@ -876,16 +876,16 @@ def pitcher_app():
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)
 
-            # P(X ≤ 2 ER)
             true_prob = round(poisson_cdf(2, lam_er) * 100, 2)   # %
             implied_prob = american_to_prob_local(under_odds) * 100
+            ev = round(true_prob - implied_prob, 2)
             tier = tier_from_prob(true_prob)
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
                 "adjusted_era": adjusted_era, "lambda_er": lam_er,
                 "true_prob": true_prob, "implied_prob": implied_prob,
-                "tier": tier, "odds": under_odds
+                "ev": ev, "tier": tier, "odds": under_odds
             }
 
         er = st.session_state.er_result
@@ -894,16 +894,14 @@ def pitcher_app():
             st.markdown(f"**Expected IP:** {er['expected_ip']} innings")
             st.markdown(f"**Adjusted ERA vs Opponent:** {er['adjusted_era']}")
             st.markdown(f"**Expected ER (λ):** {er['lambda_er']}")
-            st.markdown(f"**True Probability U2.5 ER:** {er['true_prob']:.2f}%")
-            st.markdown(f"**Implied Probability (from Odds):** {er['implied_prob']:.2f}%")
-            st.markdown(f"**Difficulty Tier:** {er['tier']}")
+            st.markdown(f"**True Probability U2.5 ER:** {er['true_prob']:.2f}% | Implied: {er['implied_prob']:.2f}% | EV: {er['ev']:+.2f}% | Tier: {er['tier']}")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save to Board: U2.5 ER"):
                     st.session_state.player_board.append({
                         "Market":"ER","Description":f"{er['pitcher']} U2.5 ER",
                         "Odds":er["odds"],"True Prob":f"{er['true_prob']:.2f}%",
-                        "EV":"—","Tier":er["tier"]
+                        "EV":f"{er['ev']:+.2f}%","Tier":er["tier"]
                     })
                     st.success("Saved.")
             with c2:
@@ -967,6 +965,12 @@ def pitcher_app():
             p_under = binom_cdf(n_bf, k_under, pK) * 100
             p_over  = (1.0 - binom_cdf(n_bf, k_over-1, pK)) * 100
             expected_ks = round(n_bf * pK, 2)
+
+            implied_over = american_to_prob_local(odds_over_f) * 100
+            implied_under = american_to_prob_local(odds_under_f) * 100
+            ev_over = round(p_over - implied_over, 2)
+            ev_under = round(p_under - implied_under, 2)
+
             over_tier = tier_from_prob(p_over)
             under_tier = tier_from_prob(p_under)
 
@@ -975,6 +979,8 @@ def pitcher_app():
                 "expected_ks": expected_ks, "k_line": k_line_v,
                 "p_over": p_over, "p_under": p_under,
                 "odds_over": odds_over_f, "odds_under": odds_under_f,
+                "implied_over": implied_over, "implied_under": implied_under,
+                "ev_over": ev_over, "ev_under": ev_under,
                 "over_tier": over_tier, "under_tier": under_tier
             }
 
@@ -985,15 +991,15 @@ def pitcher_app():
             st.markdown(f"**Estimated Batters Faced (BF):** {kr['n_bf']}  (PA/IP = {PA_PER_INNING})")
             st.markdown(f"**Per-PA Strikeout Probability (pK):** {kr['pK']:.3f}")
             st.markdown(f"**Expected Strikeouts (mean Ks):** {kr.get('expected_ks','—')}")
-            st.markdown(f"**Over True %:** {kr['p_over']:.2f}% · Tier: {kr['over_tier']}")
-            st.markdown(f"**Under True %:** {kr['p_under']:.2f}% · Tier: {kr['under_tier']}")
+            st.markdown(f"**Over True %:** {kr['p_over']:.2f}% | Implied: {kr['implied_over']:.2f}% | EV: {kr['ev_over']:+.2f}% | Tier: {kr['over_tier']}")
+            st.markdown(f"**Under True %:** {kr['p_under']:.2f}% | Implied: {kr['implied_under']:.2f}% | EV: {kr['ev_under']:+.2f}% | Tier: {kr['under_tier']}")
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("💾 Save to Board: Over K"):
                     st.session_state.player_board.append({
                         "Market":"K","Description":f"{kr['pitcher']} O{kr['k_line']} K",
                         "Odds":kr["odds_over"],"True Prob":f"{kr['p_over']:.2f}%",
-                        "EV":"—","Tier":kr["over_tier"]
+                        "EV":f"{kr['ev_over']:+.2f}%","Tier":kr["over_tier"]
                     })
                     st.success("Saved Over.")
             with c2:
@@ -1001,7 +1007,7 @@ def pitcher_app():
                     st.session_state.player_board.append({
                         "Market":"K","Description":f"{kr['pitcher']} U{kr['k_line']} K",
                         "Odds":kr["odds_under"],"True Prob":f"{kr['p_under']:.2f}%",
-                        "EV":"—","Tier":kr["under_tier"]
+                        "EV":f"{kr['ev_under']:+.2f}%","Tier":kr["under_tier"]
                     })
                     st.success("Saved Under.")
             c3, c4 = st.columns(2)
@@ -1032,6 +1038,7 @@ def pitcher_app():
             for p in st.session_state.player_board
         ])
         st.dataframe(df, use_container_width=True)
+
 
 
 
