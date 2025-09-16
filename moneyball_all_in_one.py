@@ -877,7 +877,7 @@ def pitcher_app():
     # --- UI Tabs ---
     tabs = st.tabs(["Earned Runs (U2.5)", "Strikeouts (K)"])
 
-    # ---------------------------
+      # ---------------------------
     # Tab 1: Earned Runs
     # ---------------------------
     with tabs[0]:
@@ -924,7 +924,7 @@ def pitcher_app():
             expected_ip = round(((base_ip + trend_ip) / 2) + park_adj, 2)
 
             adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
-            lam_er = round(adjusted_era * (expected_ip / 9), 3)
+            lam_er = round(adjusted_era * (expected_ip / 9), 3)  # 👈 mean earned runs
 
             # P(X ≤ 2 ER)
             true_prob = round(poisson_cdf(2, lam_er) * 100, 2)
@@ -934,6 +934,7 @@ def pitcher_app():
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
+                "proj_er": lam_er,  # 👈 store mean ER
                 "true_prob": true_prob, "implied_prob": implied_prob,
                 "odds": under_odds, "ev": ev, "tier": tier
             }
@@ -942,6 +943,7 @@ def pitcher_app():
         if er:
             st.subheader("📊 Earned Runs Projection Explanation")
             st.markdown(f"- **Expected IP:** {er['expected_ip']}")
+            st.markdown(f"- **Projected Earned Runs (mean):** {er['proj_er']}")  # 👈 new line
             st.markdown(f"- **True Probability U2.5 ER:** {er['true_prob']}%")
             st.markdown(f"- **Implied Probability:** {er['implied_prob']:.2f}%")
             st.markdown(f"- **EV:** {er['ev']:.2f}%")
@@ -961,6 +963,7 @@ def pitcher_app():
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
                     add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100)
                     st.success("Added to Global Parlay")
+
 
     # ---------------------------
     # Tab 2: Strikeouts
