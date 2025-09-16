@@ -694,7 +694,7 @@ def ats_totals_app():
 
 
 # =====================================================
-# ======== MODULE: MLB HIT SIMULATOR (Updated) ========
+# ======== MODULE: MLB HIT SIMULATOR (Fixed v3) =======
 # =====================================================
 def mlb_hits_app():
     st.header("⚾ Moneyball Phil: Hit Probability Simulator")
@@ -735,6 +735,10 @@ def mlb_hits_app():
         hand_avg_txt    = st.text_input("AVG vs Handedness", placeholder="0.305", key="hand_avg")
         pitcher_avg_txt = st.text_input("AVG vs Pitcher", placeholder="0.270", key="pitcher_avg")
 
+        # 🔄 Restored Inputs
+        ab_vs_pitcher = st.number_input("At-Bats vs Pitcher", min_value=0, step=1, key="ab_vs_pitcher")
+        pitcher_hand = st.selectbox("Pitcher Handedness", ["Right", "Left"], key="pitcher_hand")
+
         pitcher_era_txt  = st.text_input("Pitcher ERA", placeholder="3.75", key="pitcher_era")
         pitcher_whip_txt = st.text_input("Pitcher WHIP", placeholder="1.20", key="pitcher_whip")
         pitcher_k9_txt   = st.text_input("Pitcher K/9", placeholder="9.3", key="pitcher_k9")
@@ -757,10 +761,8 @@ def mlb_hits_app():
         except Exception as e:
             st.error(f"Input error: {e}")
         else:
-            # Weighted avg
             weighted_avg = calculate_weighted_avg(season_avg, last7_avg, split_avg, hand_avg, pitcher_avg)
 
-            # ERA / WHIP / K9 adjustments
             if pitcher_era > 4.50: weighted_avg += 0.010
             elif pitcher_era < 3.00: weighted_avg -= 0.010
             if pitcher_whip >= 1.40: weighted_avg += 0.015
@@ -778,28 +780,45 @@ def mlb_hits_app():
             ev = (true_prob - implied_prob) * 100.0
 
             st.session_state.last_player_result = {
-                "id": next_id(), "name": name or "Player",
-                "true_prob": true_prob, "implied_prob": implied_prob,
-                "ev": ev, "odds_txt": odds_txt.strip()
+                "id": next_id(),
+                "name": name or "Player",
+                "true_prob": true_prob,
+                "implied_prob": implied_prob,
+                "ev": ev,
+                "odds_txt": odds_txt.strip(),
+                # 🔄 Restored fields
+                "ab_vs_pitcher": ab_vs_pitcher,
+                "pitcher_hand": pitcher_hand,
+                "weighted_avg": weighted_avg,
+                "adj_avg": adj_weighted_avg,
+                "est_ab": est_ab
             }
 
     if st.session_state.last_player_result:
         r = st.session_state.last_player_result
-        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.2f}% | "
-                   f"Implied: {r['implied_prob']*100:.2f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']}")
-        c1, c2 = st.columns(2)
-        with c1:
-            if st.button("💾 Save to Board (Hit)"):
-                st.session_state.saved_players.append(r)
-                st.success("Saved to board.")
-        with c2:
-            if st.button("🌍 Add to Global Parlay (Hit)"):
-                try:
-                    odds = float(r["odds_txt"].replace("+",""))
-                    add_to_global_parlay("MLB Hit", f"{r['name']} — 1+ Hit", odds, r["true_prob"])
-                    st.success("Added to Global Parlay")
-                except Exception:
-                    st.warning("Couldn't parse odds for global parlay.")
+        st.markdown("---")
+        st.subheader("🧪 Latest Simulation (Preview)")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Adjusted AVG", f"{r['adj_avg']:.3f}")
+        c2.metric("Est. AB", f"{r['est_ab']:.1f}")
+        c3.metric("Pitcher Hand", r["pitcher_hand"])
+
+        st.write(f"**Player:** {r['name']}  |  **Pitcher Hand:** {r['pitcher_hand']}  |  **Batting Order:** {r['batting_order']}  |  **AB vs Pitcher:** {r['ab_vs_pitcher']}")
+        st.write(f"**Weighted AVG (pre-adj):** `{r['weighted_avg']}`  →  **Adjusted:** `{r['adj_avg']}`")
+        st.write(f"**True Hit %:** {r['true_prob']*100:.1f}%  |  **Implied %:** {r['implied_prob']*100:.1f}%  |  **EV %:** {r['ev']:+.1f}%  |  **Odds:** {r['odds_txt']}")
+
+        sc1, sc2 = st.columns(2)
+        if sc1.button("💾 Save to Board (Hit)"):
+            st.session_state.saved_players.append(r)
+            st.success("Saved to board.")
+        if sc2.button("🌍 Add to Global Parlay (Hit)"):
+            try:
+                odds = float(r["odds_txt"].replace("+",""))
+                add_to_global_parlay("MLB Hit", f"{r['name']} — 1+ Hit", odds, r["true_prob"])
+                st.success("Added to Global Parlay")
+            except Exception:
+                st.warning("Couldn't parse odds for global parlay.")
 
     st.markdown("---")
     st.header("📌 Saved Player Board")
