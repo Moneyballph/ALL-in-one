@@ -694,7 +694,7 @@ def ats_totals_app():
 
 
 # =====================================================
-# ======== MODULE: MLB HIT SIMULATOR (Fixed) ==========
+# ======== MODULE: MLB HIT SIMULATOR (Restored) =======
 # =====================================================
 def mlb_hits_app():
     st.header("⚾ Moneyball Phil: Hit Probability Simulator")
@@ -712,8 +712,7 @@ def mlb_hits_app():
 
     def _to_float(txt: str, *, allow_empty=False, default=0.0):
         s = str(txt).strip()
-        if allow_empty and s == "":
-            return default
+        if allow_empty and s == "": return default
         return float(s)
 
     def american_to_implied_from_text(txt: str) -> float:
@@ -726,6 +725,16 @@ def mlb_hits_app():
 
     def binomial_hit_probability(avg, ab=4):
         return 1 - (1 - avg) ** ab
+
+    def classify_zone(prob):
+        if prob >= 0.8:
+            return "🟩 Elite"
+        elif prob >= 0.7:
+            return "🟨 Strong"
+        elif prob >= 0.6:
+            return "🟧 Moderate"
+        else:
+            return "🟥 Risky"
 
     st.subheader("📥 Player Stat Entry")
     with st.form("player_input"):
@@ -780,30 +789,24 @@ def mlb_hits_app():
             true_prob = binomial_hit_probability(adj_weighted_avg, ab=round(est_ab))
             implied_prob = odds_implied
             ev = (true_prob - implied_prob) * 100.0
+            zone = classify_zone(true_prob)
 
             st.session_state.last_player_result = {
-                "id": next_id(),
-                "name": name or "Player",
-                "true_prob": true_prob,
-                "implied_prob": implied_prob,
-                "ev": ev,
-                "odds_txt": odds_txt.strip(),
-                # ✅ restored inputs
+                "id": next_id(), "name": name or "Player",
+                "true_prob": true_prob, "implied_prob": implied_prob,
+                "ev": ev, "odds_txt": odds_txt.strip(),
                 "batting_order": batting_order,
                 "pitcher_hand": pitcher_hand,
-                "ab_vs_pitcher": ab_vs_pitcher
+                "ab_vs_pitcher": ab_vs_pitcher,
+                "zone": zone
             }
 
     if st.session_state.last_player_result:
         r = st.session_state.last_player_result
-        st.success(
-            f"{r['name']} — True Hit %: {r['true_prob']*100:.2f}% | "
-            f"Implied: {r['implied_prob']*100:.2f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']}"
-        )
-        st.write(
-            f"**Player:** {r['name']} | **Pitcher Hand:** {r['pitcher_hand']} | "
-            f"**Batting Order:** {r['batting_order']} | **AB vs Pitcher:** {r['ab_vs_pitcher']}"
-        )
+        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.2f}% | "
+                   f"Implied: {r['implied_prob']*100:.2f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']} | {r['zone']}")
+        st.write(f"**Player:** {r['name']} | **Pitcher Hand:** {r['pitcher_hand']} | "
+                 f"**Batting Order:** {r['batting_order']} | **AB vs Pitcher:** {r['ab_vs_pitcher']}")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -813,7 +816,7 @@ def mlb_hits_app():
         with c2:
             if st.button("🌍 Add to Global Parlay (Hit)"):
                 try:
-                    odds = float(r["odds_txt"].replace("+", ""))
+                    odds = float(r["odds_txt"].replace("+",""))
                     add_to_global_parlay("MLB Hit", f"{r['name']} — 1+ Hit", odds, r["true_prob"])
                     st.success("Added to Global Parlay")
                 except Exception:
@@ -830,11 +833,13 @@ def mlb_hits_app():
                 "True %": f"{p['true_prob']*100:.2f}%",
                 "Implied %": f"{p['implied_prob']*100:.2f}%",
                 "EV %": f"{p['ev']:.1f}%",
-                "Odds": p["odds_txt"]
+                "Odds": p["odds_txt"],
+                "Zone": p["zone"]
             }
             for p in st.session_state.saved_players
         ])
         st.dataframe(df, use_container_width=True)
+
 
 
 # =====================================================
