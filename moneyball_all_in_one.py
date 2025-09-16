@@ -812,7 +812,7 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Final: Explanations + EV + Tiers + Delete Support)
+# (Final: Explanations + True Prob Tiers + Delete Support)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
@@ -867,10 +867,11 @@ def pitcher_app():
         adj = base * park_factor * ump_factor * recent_factor
         return max(0.10, min(0.45, adj))
 
-    def get_tier(ev):
-        if ev >= 10: return "🟢 Elite"
-        if ev >= 5: return "🟡 Strong"
-        if ev >= 0: return "🟠 Moderate"
+    # --- Tiering (True Probability) ---
+    def get_tier_prob(prob):
+        if prob >= 80: return "🟢 Elite"
+        if prob >= 65: return "🟡 Strong"
+        if prob >= 50: return "🟠 Moderate"
         return "🔴 Risky"
 
     # --- UI Tabs ---
@@ -929,7 +930,7 @@ def pitcher_app():
             true_prob = round(poisson_cdf(2, lam_er) * 100, 2)
             implied_prob = american_to_prob_local(under_odds) * 100
             ev = round(true_prob - implied_prob, 2)
-            tier = get_tier(ev)
+            tier = get_tier_prob(true_prob)
 
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
@@ -1023,8 +1024,8 @@ def pitcher_app():
             implied_under = american_to_prob_local(odds_under_f) * 100
             ev_over = round(p_over - implied_over, 2)
             ev_under = round(p_under - implied_under, 2)
-            tier_over = get_tier(ev_over)
-            tier_under = get_tier(ev_under)
+            tier_over = get_tier_prob(p_over)
+            tier_under = get_tier_prob(p_under)
 
             st.session_state.k_result = {
                 "pitcher": k_pitcher, "k_line": k_line_v, "expected_ip": expected_ip_k,
