@@ -694,7 +694,7 @@ def ats_totals_app():
 
 
 # =====================================================
-# ======== MODULE: MLB HIT SIMULATOR (Restored) =======
+# ======== MODULE: MLB HIT SIMULATOR (Final) ==========
 # =====================================================
 def mlb_hits_app():
     st.header("⚾ Moneyball Phil: Hit Probability Simulator")
@@ -712,7 +712,8 @@ def mlb_hits_app():
 
     def _to_float(txt: str, *, allow_empty=False, default=0.0):
         s = str(txt).strip()
-        if allow_empty and s == "": return default
+        if allow_empty and s == "":
+            return default
         return float(s)
 
     def american_to_implied_from_text(txt: str) -> float:
@@ -770,18 +771,20 @@ def mlb_hits_app():
         except Exception as e:
             st.error(f"Input error: {e}")
         else:
-            # Weighted avg
             weighted_avg = calculate_weighted_avg(season_avg, last7_avg, split_avg, hand_avg, pitcher_avg)
 
-            # ERA / WHIP / K9 adjustments
-            if pitcher_era > 4.50: weighted_avg += 0.010
-            elif pitcher_era < 3.00: weighted_avg -= 0.010
-            if pitcher_whip >= 1.40: weighted_avg += 0.015
-            elif pitcher_whip < 1.10: weighted_avg -= 0.015
-            if pitcher_k9 >= 10.0: weighted_avg -= 0.015
-            elif pitcher_k9 <= 7.0: weighted_avg += 0.010
+            # Pitcher difficulty adjustments
+            if pitcher_whip >= 1.40 or pitcher_era >= 5.00:
+                adjustment = 0.020
+                tier_pitcher = "🟢 Easy Pitcher"
+            elif pitcher_whip < 1.10 or pitcher_era < 3.50:
+                adjustment = -0.020
+                tier_pitcher = "🔴 Tough Pitcher"
+            else:
+                adjustment = 0.000
+                tier_pitcher = "🟨 Average Pitcher"
 
-            adj_weighted_avg = max(0.0, min(1.0, weighted_avg))
+            adj_weighted_avg = max(0.0, min(1.0, weighted_avg + adjustment))
 
             ab_lookup = {1: 4.6, 2: 4.5, 3: 4.4, 4: 4.3, 5: 4.2, 6: 4.0, 7: 3.8, 8: 3.6, 9: 3.4}
             est_ab = ab_lookup.get(batting_order, 4.0)
@@ -798,15 +801,28 @@ def mlb_hits_app():
                 "batting_order": batting_order,
                 "pitcher_hand": pitcher_hand,
                 "ab_vs_pitcher": ab_vs_pitcher,
+                "weighted_avg": weighted_avg,
+                "adj_avg": adj_weighted_avg,
+                "est_ab": est_ab,
+                "pitcher_tier": tier_pitcher,
                 "zone": zone
             }
 
     if st.session_state.last_player_result:
         r = st.session_state.last_player_result
-        st.success(f"{r['name']} — True Hit %: {r['true_prob']*100:.2f}% | "
-                   f"Implied: {r['implied_prob']*100:.2f}% | EV {r['ev']:+.1f}% | Odds {r['odds_txt']} | {r['zone']}")
+        st.markdown("---")
+        st.subheader("🧪 Latest Simulation (Preview)")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Adjusted AVG", f"{r['adj_avg']:.3f}")
+        c2.metric("Est. AB", f"{r['est_ab']:.1f}")
+        c3.metric("Pitcher Tier", r["pitcher_tier"])
+
         st.write(f"**Player:** {r['name']} | **Pitcher Hand:** {r['pitcher_hand']} | "
                  f"**Batting Order:** {r['batting_order']} | **AB vs Pitcher:** {r['ab_vs_pitcher']}")
+        st.write(f"**Weighted AVG (pre-adj):** `{r['weighted_avg']}` → **Adjusted:** `{r['adj_avg']}`")
+        st.write(f"**True Hit %:** {r['true_prob']*100:.1f}% | **Implied %:** {r['implied_prob']*100:.1f}% | "
+                 f"**EV %:** {r['ev']:+.1f}% | **Odds:** {r['odds_txt']} | **Zone:** {r['zone']}")
 
         c1, c2 = st.columns(2)
         with c1:
@@ -833,12 +849,13 @@ def mlb_hits_app():
                 "True %": f"{p['true_prob']*100:.2f}%",
                 "Implied %": f"{p['implied_prob']*100:.2f}%",
                 "EV %": f"{p['ev']:.1f}%",
-                "Odds": p["odds_txt"],
-                "Zone": p["zone"]
+                "Zone": p["zone"],
+                "Odds": p["odds_txt"]
             }
             for p in st.session_state.saved_players
         ])
         st.dataframe(df, use_container_width=True)
+
 
 
 
