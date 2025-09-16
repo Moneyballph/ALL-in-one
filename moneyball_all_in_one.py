@@ -399,11 +399,11 @@ def nfl_app():
     render_board()
 
 # =====================================================
-# ============ MODULE: ATS & Totals (v3.5) ============
-# (Restored projections + tier color labels + adj fix)
+# ============ MODULE: ATS & Totals (v3.6) ============
+# (Restored projections + probability-first tier fix)
 # =====================================================
 def ats_totals_app():
-    st.header("📊 Moneyball Phil — ATS & Totals (v3.5)")
+    st.header("📊 Moneyball Phil — ATS & Totals (v3.6)")
 
     # ----------------- State -----------------
     def init_state():
@@ -449,11 +449,18 @@ def ats_totals_app():
     def project_scores_base(H_pf: float, H_pa: float, A_pf: float, A_pa: float):
         return (H_pf + A_pa) / 2.0, (A_pf + H_pa) / 2.0
 
-    def tier_label(ev):
-        if ev >= 20: return "🟢 Elite"
-        if ev >= 10: return "🟡 Strong"
-        if ev >= 0: return "🟠 Moderate"
-        return "🔴 Risky"
+    # ✅ FIXED: Probability-first tier system
+    def tier_label(true_prob, ev):
+        if true_prob < 50 or ev <= 0:
+            return "🔴 Risky"
+        elif 55 <= true_prob < 65 and ev >= 2:
+            return "🟠 Moderate"
+        elif 65 <= true_prob < 75 and ev >= 5:
+            return "🟡 Strong"
+        elif true_prob >= 75 and ev >= 7:
+            return "🟢 Elite"
+        else:
+            return "🟠 Moderate"
 
     # ----------------- UI -----------------
     sport = st.selectbox("Select Sport", ["MLB", "NFL", "NBA", "NCAA Football", "NCAA Basketball"])
@@ -653,7 +660,7 @@ def ats_totals_app():
                         f"**Projected Total:** {proj_total:.2f} | **Projected Margin:** {proj_margin:.2f}")
 
             for bet, tp, ip, ev in inline_summaries:
-                st.markdown(f"🔹 **{bet} → True {tp:.2f}% | Implied {ip:.2f}% | EV {ev:.2f}% | {tier_label(ev)}**")
+                st.markdown(f"🔹 **{bet} → True {tp:.2f}% | Implied {ip:.2f}% | EV {ev:.2f}% | {tier_label(tp, ev)}**")
 
         # Results Table + Details
         if st.session_state.get("results_df") is not None:
@@ -666,7 +673,7 @@ def ats_totals_app():
                 selected = df[df["Bet Type"] == choice].iloc[0]
 
                 st.subheader("Bet Details")
-                st.markdown(f"Tier: {tier_label(float(selected['EV %'].replace('%','')))}")
+                st.markdown(f"Tier: {tier_label(float(selected['True %'].replace('%','')), float(selected['EV %'].replace('%','')))}")
 
                 st.progress(float(selected['True %'].replace("%",""))/100.0, text=f"True Probability: {selected['True %']}")
                 st.progress(float(selected['Implied %'].replace("%",""))/100.0, text=f"Implied Probability: {selected['Implied %']}")
@@ -682,6 +689,7 @@ def ats_totals_app():
                                              float(selected["Odds"]),
                                              float(selected["True %"].replace("%",""))/100.0)
                         st.success("Added to Global Parlay")
+
 
 
 
