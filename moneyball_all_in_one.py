@@ -400,7 +400,7 @@ def nfl_app():
 
 # =====================================================
 # ============ MODULE: ATS & Totals (v3.5) ============
-# (Restored projections + tier color labels)
+# (Restored projections + tier color labels + adj fix)
 # =====================================================
 def ats_totals_app():
     st.header("📊 Moneyball Phil — ATS & Totals (v3.5)")
@@ -561,12 +561,54 @@ def ats_totals_app():
     with col_results:
         if run_projection:
             S = st.session_state
+
+            # ===== Base from averages =====
             home_pts, away_pts = project_scores_base(S.home_pf, S.home_pa, S.away_pf, S.away_pa)
-            auto_vol_used = suggested_volatility(sport) if auto_volatility else float(variance_pct_manual)
-            sd_total, sd_margin = get_sport_sigmas(sport)
-            sd_total *= (1 + auto_vol_used/100.0); sd_margin *= (1 + auto_vol_used/100.0)
+
+            # ===== Universal additive adjustments =====
+            home_pts += home_edge_pts
+            away_pts += away_edge_pts
+
+            # ===== Universal % adjustments =====
+            home_pts *= (1 + form_H_pct/100.0) * (1 + injury_H_pct/100.0)
+            away_pts *= (1 + form_A_pct/100.0) * (1 + injury_A_pct/100.0)
+
+            # ===== Football specifics =====
+            if sport in ["NFL", "NCAA Football"]:
+                home_pts += to_margin_pts/2.0
+                away_pts -= to_margin_pts/2.0
+                home_pts *= (1 + redzone_H_pct/100.0)
+                away_pts *= (1 + redzone_A_pct/100.0)
+                scale = 1 + plays_pct/100.0
+                home_pts *= scale; away_pts *= scale
+
+            # ===== Basketball specifics =====
+            if sport in ["NBA", "NCAA Basketball"]:
+                home_pts *= (1 + pace_pct_hoops/100.0) * (1 + ortg_H_pct/100.0) * (1 + rest_H_pct/100.0)
+                away_pts *= (1 + ortg_A_pct/100.0) * (1 + rest_A_pct/100.0)
+                home_pts *= (1 + drtg_A_pct/100.0)
+                away_pts *= (1 + drtg_H_pct/100.0)
+
+            # ===== MLB specifics =====
+            if sport == "MLB":
+                home_pts += sp_H_runs + bullpen_H_runs
+                away_pts += sp_A_runs + bullpen_A_runs
+                factor = (1 + park_total_pct/100.0) * (1 + weather_total_pct/100.0)
+                home_pts *= factor; away_pts *= factor
+
+            # ===== Global pace/volatility tweaks =====
+            home_pts *= (1 + pace_pct_global/100.0)
+            away_pts *= (1 + pace_pct_global/100.0)
+
+            # ===== Final totals =====
             proj_total = home_pts + away_pts
             proj_margin = home_pts - away_pts
+
+            auto_vol_used = suggested_volatility(sport) if auto_volatility else float(variance_pct_manual)
+            sd_total, sd_margin = get_sport_sigmas(sport)
+            sd_total *= (1 + auto_vol_used/100.0)
+            sd_margin *= (1 + auto_vol_used/100.0)
+
             rows, inline_summaries = [], []
 
             # Spread probs
@@ -578,24 +620,28 @@ def ats_totals_app():
                 true_home = _std_norm_cdf(z_spread_home) * 100.0
 
             ev_home, impl_home = calculate_ev_pct(true_home, S.spread_odds_home)
-            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home, f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:.2f}%"])
+            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home,
+                         f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:.2f}%"])
             inline_summaries.append((f"{S.home} {S.spread_line_home:+.2f}", true_home, impl_home, ev_home))
 
             true_away = 100.0 - true_home
             ev_away, impl_away = calculate_ev_pct(true_away, S.spread_odds_away)
-            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away, f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:.2f}%"])
+            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away,
+                         f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:.2f}%"])
             inline_summaries.append((f"{S.away} {(-S.spread_line_home):+.2f}", true_away, impl_away, ev_away))
 
             # Totals
             z_total_over = (proj_total - S.total_line) / sd_total
             true_over = _std_norm_cdf(z_total_over) * 100.0
             ev_over, impl_over = calculate_ev_pct(true_over, S.over_odds)
-            rows.append([f"Over {S.total_line:.2f}", S.over_odds, f"{true_over:.2f}%", f"{impl_over:.2f}%", f"{ev_over:.2f}%"])
+            rows.append([f"Over {S.total_line:.2f}", S.over_odds,
+                         f"{true_over:.2f}%", f"{impl_over:.2f}%", f"{ev_over:.2f}%"])
             inline_summaries.append((f"Over {S.total_line:.2f}", true_over, impl_over, ev_over))
 
             true_under = max(0.0, 100.0 - true_over)
             ev_under, impl_under = calculate_ev_pct(true_under, S.under_odds)
-            rows.append([f"Under {S.total_line:.2f}", S.under_odds, f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
+            rows.append([f"Under {S.total_line:.2f}", S.under_odds,
+                         f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
             inline_summaries.append((f"Under {S.total_line:.2f}", true_under, impl_under, ev_under))
 
             df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
@@ -632,8 +678,11 @@ def ats_totals_app():
                         st.success("Bet saved locally (straight bet).")
                 with colB:
                     if st.button("🌍 Send to Parlay Slip"):
-                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]), float(selected["Odds"]), float(selected["True %"].replace("%",""))/100.0)
+                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]),
+                                             float(selected["Odds"]),
+                                             float(selected["True %"].replace("%",""))/100.0)
                         st.success("Added to Global Parlay")
+
 
 
 # =====================================================
