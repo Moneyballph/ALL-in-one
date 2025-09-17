@@ -555,10 +555,11 @@ def ats_totals_app():
                     sp_H_runs = sp_A_runs = bullpen_H_runs = bullpen_A_runs = 0.0
                     park_total_pct = weather_total_pct = 0.0
 
-            # 🔮 Run Projection + Reset button
-            c1, c2 = st.columns(2)
-            run_projection = c1.form_submit_button("🔮 Run Projection")
-            reset_inputs = c2.form_submit_button("♻️ Reset Inputs")
+                          # 🔮 Run Projection button (unchanged)
+            run_projection = st.form_submit_button("🔮 Run Projection")
+
+            # ♻️ Reset Inputs button (added, separate)
+            reset_inputs = st.form_submit_button("♻️ Reset Inputs")
 
             if reset_inputs:
                 for k in list(st.session_state.keys()):
