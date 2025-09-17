@@ -555,17 +555,150 @@ def ats_totals_app():
                     sp_H_runs = sp_A_runs = bullpen_H_runs = bullpen_A_runs = 0.0
                     park_total_pct = weather_total_pct = 0.0
 
-                          # 🔮 Run Projection button (unchanged)
-            run_projection = st.form_submit_button("🔮 Run Projection")
+            # 🔮 Run + ♻️ Reset (keys to avoid conflicts)
+            btn1, btn2 = st.columns(2)
+            with btn1:
+                run_projection = st.form_submit_button("🔮 Run Projection", key="run_projection_btn_v35")
+            with btn2:
+                reset_inputs = st.form_submit_button("♻️ Reset Inputs", key="reset_inputs_btn_v35")
 
-            # ♻️ Reset Inputs button (added, separate)
-            reset_inputs = st.form_submit_button("♻️ Reset Inputs")
-
+            # Safe reset: only clear known inputs + results
             if reset_inputs:
-                for k in list(st.session_state.keys()):
-                    del st.session_state[k]
-                init_state()
-                st.experimental_rerun()
+                for key in ["home","away","home_pf","home_pa","away_pf","away_pa",
+                            "spread_line_home","spread_odds_home","spread_odds_away",
+                            "total_line","over_odds","under_odds","stake","results_df"]:
+                    if key in ["home","away"]:
+                        st.session_state[key] = ""
+                    else:
+                        st.session_state[key] = 0.0 if key != "results_df" else None
+                st.success("Inputs reset.")
+                st.stop()  # stop to avoid running results on same submit
+
+    # ----------------- Results -----------------
+    with col_results:
+        if run_projection:
+            S = st.session_state
+
+            # ===== Base from averages =====
+            home_pts, away_pts = project_scores_base(S.home_pf, S.home_pa, S.away_pf, S.away_pa)
+
+            # ===== Universal additive adjustments =====
+            home_pts += home_edge_pts
+            away_pts += away_edge_pts
+
+            # ===== Universal % adjustments =====
+            home_pts *= (1 + form_H_pct/100.0) * (1 + injury_H_pct/100.0)
+            away_pts *= (1 + form_A_pct/100.0) * (1 + injury_A_pct/100.0)
+
+            # ===== Football specifics =====
+            if sport in ["NFL", "NCAA Football"]:
+                home_pts += to_margin_pts/2.0
+                away_pts -= to_margin_pts/2.0
+                home_pts *= (1 + redzone_H_pct/100.0)
+                away_pts *= (1 + redzone_A_pct/100.0)
+                scale = 1 + plays_pct/100.0
+                home_pts *= scale; away_pts *= scale
+
+            # ===== Basketball specifics =====
+            if sport in ["NBA", "NCAA Basketball"]:
+                home_pts *= (1 + pace_pct_hoops/100.0) * (1 + ortg_H_pct/100.0) * (1 + rest_H_pct/100.0)
+                away_pts *= (1 + ortg_A_pct/100.0) * (1 + rest_A_pct/100.0)
+                home_pts *= (1 + drtg_A_pct/100.0)
+                away_pts *= (1 + drtg_H_pct/100.0)
+
+            # ===== MLB specifics =====
+            if sport == "MLB":
+                home_pts += sp_H_runs + bullpen_H_runs
+                away_pts += sp_A_runs + bullpen_A_runs
+                factor = (1 + park_total_pct/100.0) * (1 + weather_total_pct/100.0)
+                home_pts *= factor; away_pts *= factor
+
+            # ===== Global pace/volatility tweaks =====
+            home_pts *= (1 + pace_pct_global/100.0)
+            away_pts *= (1 + pace_pct_global/100.0)
+
+            # ===== Final totals =====
+            proj_total = home_pts + away_pts
+            proj_margin = home_pts - away_pts
+
+            auto_vol_used = suggested_volatility(sport) if auto_volatility else float(variance_pct_manual)
+            sd_total, sd_margin = get_sport_sigmas(sport)
+            sd_total *= (1 + auto_vol_used/100.0)
+            sd_margin *= (1 + auto_vol_used/100.0)
+
+            rows, inline_summaries = [], []
+
+            # Spread probs
+            if S.spread_line_home < 0:
+                z_spread_home = (proj_margin - abs(S.spread_line_home)) / sd_margin
+                true_home = _std_norm_cdf(z_spread_home) * 100.0
+            else:
+                z_spread_home = (proj_margin + abs(S.spread_line_home)) / sd_margin
+                true_home = _std_norm_cdf(z_spread_home) * 100.0
+
+            ev_home, impl_home = calculate_ev_pct(true_home, S.spread_odds_home)
+            rows.append([f"{S.home} {S.spread_line_home:+.2f}", S.spread_odds_home,
+                         f"{true_home:.2f}%", f"{impl_home:.2f}%", f"{ev_home:.2f}%"])
+            inline_summaries.append((f"{S.home} {S.spread_line_home:+.2f}", true_home, impl_home, ev_home))
+
+            true_away = 100.0 - true_home
+            ev_away, impl_away = calculate_ev_pct(true_away, S.spread_odds_away)
+            rows.append([f"{S.away} {(-S.spread_line_home):+.2f}", S.spread_odds_away,
+                         f"{true_away:.2f}%", f"{impl_away:.2f}%", f"{ev_away:.2f}%"])
+            inline_summaries.append((f"{S.away} {(-S.spread_line_home):+.2f}", true_away, impl_away, ev_away))
+
+            # Totals
+            z_total_over = (proj_total - S.total_line) / sd_total
+            true_over = _std_norm_cdf(z_total_over) * 100.0
+            ev_over, impl_over = calculate_ev_pct(true_over, S.over_odds)
+            rows.append([f"Over {S.total_line:.2f}", S.over_odds,
+                         f"{true_over:.2f}%", f"{impl_over:.2f}%", f"{ev_over:.2f}%"])
+            inline_summaries.append((f"Over {S.total_line:.2f}", true_over, impl_over, ev_over))
+
+            true_under = max(0.0, 100.0 - true_over)
+            ev_under, impl_under = calculate_ev_pct(true_under, S.under_odds)
+            rows.append([f"Under {S.total_line:.2f}", S.under_odds,
+                         f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
+            inline_summaries.append((f"Under {S.total_line:.2f}", true_under, impl_under, ev_under))
+
+            df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
+            st.session_state.results_df = df
+
+            # Projections + Inline Summaries
+            st.subheader("Projected Game Outcome")
+            st.markdown(f"**Projected Home:** {home_pts:.2f} | **Projected Away:** {away_pts:.2f} | "
+                        f"**Projected Total:** {proj_total:.2f} | **Projected Margin:** {proj_margin:.2f}")
+
+            for bet, tp, ip, ev in inline_summaries:
+                st.markdown(f"🔹 **{bet} → True {tp:.2f}% | Implied {ip:.2f}% | EV {ev:.2f}% | {tier_label(ev)}**")
+
+        # Results Table + Details
+        if st.session_state.get("results_df") is not None:
+            df = st.session_state.results_df
+            st.subheader("Bet Results")
+            st.dataframe(df, use_container_width=True)
+
+            if len(df) > 0:
+                choice = st.selectbox("Select a bet:", options=list(df["Bet Type"]))
+                selected = df[df["Bet Type"] == choice].iloc[0]
+
+                st.subheader("Bet Details")
+                st.markdown(f"Tier: {tier_label(float(selected['EV %'].replace('%','')))}")
+
+                st.progress(float(selected['True %'].replace("%",""))/100.0, text=f"True Probability: {selected['True %']}")
+                st.progress(float(selected['Implied %'].replace("%",""))/100.0, text=f"Implied Probability: {selected['Implied %']}")
+                st.progress((float(selected['EV %'].replace("%",""))+100)/200, text=f"EV%: {selected['EV %']}")
+
+                colA, colB = st.columns(2)
+                with colA:
+                    if st.button("💾 Save Straight Bet"):
+                        st.success("Bet saved locally (straight bet).")
+                with colB:
+                    if st.button("🌍 Send to Parlay Slip"):
+                        add_to_global_parlay("ATS/Totals", str(selected["Bet Type"]),
+                                             float(selected["Odds"]),
+                                             float(selected["True %"].replace("%",""))/100.0)
+                        st.success("Added to Global Parlay")
 
 
 
