@@ -894,7 +894,7 @@ def mlb_hits_app():
 
 # =====================================================
 # ======= MODULE: Pitcher ER & K Simulator ============
-# (Final: Explanations + True Prob Tiers + Delete Support)
+# (Final: Explanations + True Prob Tiers + Delete Support + xERA + WHIP restored)
 # =====================================================
 def pitcher_app():
     st.header("👨‍⚾ Pitcher Earned Runs & Strikeouts Simulator")
@@ -959,7 +959,7 @@ def pitcher_app():
     # --- UI Tabs ---
     tabs = st.tabs(["Earned Runs (U2.5)", "Strikeouts (K)"])
 
-      # ---------------------------
+    # ---------------------------
     # Tab 1: Earned Runs
     # ---------------------------
     with tabs[0]:
@@ -971,6 +971,8 @@ def pitcher_app():
                 er_total_ip = st.text_input("Total Innings Pitched", key="er_total_ip")
                 er_games = st.number_input("Games Started", value=15, step=1, key="er_games")
                 er_last3 = st.text_input("Last 3 Game IP (e.g. 5.2,6.1,5.0)", key="er_last3")
+                er_xera = st.text_input("xERA (optional, overrides ERA)", key="er_xera")
+                er_whip = st.text_input("WHIP (optional)", key="er_whip")
             with c2:
                 er_oppops = st.text_input("Opponent OPS", key="er_oppops")
                 er_lgops = st.text_input("League Average OPS", key="er_lgops")
@@ -990,22 +992,28 @@ def pitcher_app():
                 total_ip       = float(er_total_ip)
                 games_started  = int(er_games)
                 last_3_ip      = er_last3
+                xera_txt       = er_xera.strip()
+                whip_txt       = er_whip.strip()
                 opponent_ops   = float(er_oppops)
                 league_avg_ops = float(er_lgops)
                 ballpark       = er_ballpark
                 under_odds     = float(str(er_under_odds).replace("+",""))
 
+                xera = float(xera_txt) if xera_txt else 0.0
+                whip = float(whip_txt) if whip_txt else 0.0
+
                 ip_values = [float(i.strip()) for i in last_3_ip.split(",") if i.strip()]
                 trend_ip  = sum(ip_values) / len(ip_values)
             except Exception:
-                st.error("Enter valid numerics for ERA/IP/OPS and odds.")
+                st.error("Enter valid numerics for ERA/IP/OPS/xERA/WHIP and odds.")
                 st.stop()
 
             base_ip = total_ip / max(1, games_started)
             park_adj = 0.2 if ballpark=="Pitcher-Friendly" else (-0.2 if ballpark=="Hitter-Friendly" else 0.0)
             expected_ip = round(((base_ip + trend_ip) / 2) + park_adj, 2)
 
-            adjusted_era = round(era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
+            used_era = xera if xera > 0 else era
+            adjusted_era = round(used_era * (opponent_ops / max(league_avg_ops, 1e-6)), 3)
             lam_er = round(adjusted_era * (expected_ip / 9), 3)  # 👈 mean earned runs
 
             # P(X ≤ 2 ER)
@@ -1014,22 +1022,25 @@ def pitcher_app():
             ev = round(true_prob - implied_prob, 2)
             tier = get_tier_prob(true_prob)
 
+            warning_msg = "⚠️ ERA may be misleading due to high WHIP. Consider xERA." if (whip > 1.45 and era < 3.20 and xera == 0) else ""
+
             st.session_state.er_result = {
                 "pitcher": pitcher_name, "expected_ip": expected_ip,
                 "proj_er": lam_er,  # 👈 store mean ER
                 "true_prob": true_prob, "implied_prob": implied_prob,
-                "odds": under_odds, "ev": ev, "tier": tier
+                "odds": under_odds, "ev": ev, "tier": tier, "warning": warning_msg
             }
 
         er = st.session_state.er_result
         if er:
             st.subheader("📊 Earned Runs Projection Explanation")
             st.markdown(f"- **Expected IP:** {er['expected_ip']}")
-            st.markdown(f"- **Projected Earned Runs (mean):** {er['proj_er']}")  # 👈 new line
+            st.markdown(f"- **Projected Earned Runs (mean):** {er['proj_er']}")
             st.markdown(f"- **True Probability U2.5 ER:** {er['true_prob']}%")
             st.markdown(f"- **Implied Probability:** {er['implied_prob']:.2f}%")
             st.markdown(f"- **EV:** {er['ev']:.2f}%")
             st.markdown(f"- **Tier:** {er['tier']}")
+            if er["warning"]: st.warning(er["warning"])
             st.success(f"{er['pitcher']} — U2.5 ER True {er['true_prob']:.2f}% | Odds {int(er['odds'])}")
 
             c1, c2 = st.columns(2)
@@ -1045,7 +1056,6 @@ def pitcher_app():
                 if st.button("🌍 Add to Global Parlay: U2.5 ER"):
                     add_to_global_parlay("Pitcher", f"{er['pitcher']} U2.5 ER", er["odds"], er["true_prob"]/100)
                     st.success("Added to Global Parlay")
-
 
     # ---------------------------
     # Tab 2: Strikeouts
