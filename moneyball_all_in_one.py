@@ -415,6 +415,7 @@ def ats_totals_app():
             "spread_odds_home": -110.0, "spread_odds_away": -110.0,
             "total_line": 0.0,
             "over_odds": -110.0, "under_odds": -110.0,
+            "ml_home": -110.0, "ml_away": -110.0,  # 🆕 Moneyline odds
             "stake": 0.0,
             "results_df": None,
         }
@@ -493,6 +494,13 @@ def ats_totals_app():
                 st.session_state.stake = st.number_input("Stake ($)", min_value=0.0, step=1.0, format="%.2f", value=float(st.session_state.stake))
                 st.session_state.under_odds = st.number_input("Under Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.under_odds))
 
+            # 🆕 Moneyline inputs
+            ml_row1, ml_row2 = st.columns(2)
+            with ml_row1:
+                st.session_state.ml_home = st.number_input("Home ML Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.ml_home))
+            with ml_row2:
+                st.session_state.ml_away = st.number_input("Away ML Odds (American)", step=1.0, format="%.0f", value=float(st.session_state.ml_away))
+
             # ⚙️ Advanced Adjustments
             with st.expander("⚙️ Advanced adjustments (optional)", expanded=False):
                 st.markdown("**Universal**")
@@ -566,7 +574,8 @@ def ats_totals_app():
             if reset_inputs:
                 for key in ["home","away","home_pf","home_pa","away_pf","away_pa",
                             "spread_line_home","spread_odds_home","spread_odds_away",
-                            "total_line","over_odds","under_odds","stake","results_df"]:
+                            "total_line","over_odds","under_odds","ml_home","ml_away",
+                            "stake","results_df"]:
                     if key in ["home","away"]:
                         st.session_state[key] = ""
                     else:
@@ -660,6 +669,19 @@ def ats_totals_app():
             rows.append([f"Under {S.total_line:.2f}", S.under_odds,
                          f"{true_under:.2f}%", f"{impl_under:.2f}%", f"{ev_under:.2f}%"])
             inline_summaries.append((f"Under {S.total_line:.2f}", true_under, impl_under, ev_under))
+
+            # 🆕 Moneyline (win prob from margin distribution)
+            true_home_ml = _std_norm_cdf(proj_margin / sd_margin) * 100.0
+            ev_home_ml, impl_home_ml = calculate_ev_pct(true_home_ml, S.ml_home)
+            rows.append([f"{S.home} ML", S.ml_home,
+                         f"{true_home_ml:.2f}%", f"{impl_home_ml:.2f}%", f"{ev_home_ml:.2f}%"])
+            inline_summaries.append((f"{S.home} ML", true_home_ml, impl_home_ml, ev_home_ml))
+
+            true_away_ml = 100.0 - true_home_ml
+            ev_away_ml, impl_away_ml = calculate_ev_pct(true_away_ml, S.ml_away)
+            rows.append([f"{S.away} ML", S.ml_away,
+                         f"{true_away_ml:.2f}%", f"{impl_away_ml:.2f}%", f"{ev_away_ml:.2f}%"])
+            inline_summaries.append((f"{S.away} ML", true_away_ml, impl_away_ml, ev_away_ml))
 
             df = pd.DataFrame(rows, columns=["Bet Type", "Odds", "True %", "Implied %", "EV %"])
             st.session_state.results_df = df
