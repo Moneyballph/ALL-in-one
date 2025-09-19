@@ -1304,40 +1304,52 @@ def nba_app():
         st.dataframe(df, use_container_width=True)
 
 # =========================
-# ===== Soccer EV App =====
+# Soccer EV Module (v3.2) with Global Parlay Button
 # =========================
 
-import math
-from typing import Dict, Tuple
-import numpy as np
-import pandas as pd
-import streamlit as st
-
 def soccer_app():
+    import math
+    from typing import Dict, Tuple
+    import numpy as np
+    import pandas as pd
+    import streamlit as st
+
     # =========================
     # --------- Utils ---------
     # =========================
+
     def american_to_decimal(odds: float) -> float:
+        """Convert American odds to Decimal odds."""
         if odds == 0:
             raise ValueError("American odds cannot be 0.")
         return 1.0 + (odds / 100.0) if odds > 0 else 1.0 + (100.0 / abs(odds))
 
     def parse_odds(odds_input: str) -> Tuple[float, float]:
+        """
+        Accept American like '-120' / '+110' or Decimal like '1.83'.
+        Returns (implied_prob [0..1], decimal_odds). Raises on invalid input.
+        """
         s = str(odds_input).strip()
         if not s:
             raise ValueError("Odds field is empty.")
+        # American?
         if s.startswith(('+', '-')):
             am = float(s)
             dec = american_to_decimal(am)
             if dec <= 1.0 or not np.isfinite(dec):
                 raise ValueError("Invalid American odds → decimal ≤ 1.")
             return 1.0 / dec, dec
+        # Decimal
         dec = float(s)
         if dec <= 1.0 or not np.isfinite(dec):
             raise ValueError("Decimal odds must be > 1.0")
         return 1.0 / dec, dec
 
     def roi_per_dollar(true_p: float, dec_odds: float) -> float:
+        """
+        EV per $1 stake. If >0 you're +EV.
+        EV_per_$ = true_p*(dec - 1) - (1 - true_p)
+        """
         return true_p * (dec_odds - 1.0) - (1.0 - true_p)
 
     def pct(x: float) -> str:
@@ -1346,16 +1358,29 @@ def soccer_app():
         except Exception:
             return "—"
 
+    # ---- Tiers driven by True Probability (market-specific cutoffs) ----
     def tier_from_true(true_p: float, market_key: str) -> tuple[str, str]:
         if true_p is None:
             return "—", "⚪"
         thresholds = {
-            "O1.5": [(0.75, "Elite", "🟢"), (0.65, "Strong", "🟡"),
-                     (0.55, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
-            "O2.5": [(0.60, "Elite", "🟢"), (0.50, "Strong", "🟡"),
-                     (0.45, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
-            "BTTS": [(0.58, "Elite", "🟢"), (0.52, "Strong", "🟡"),
-                     (0.47, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
+            "O1.5": [
+                (0.75, "Elite",    "🟢"),
+                (0.65, "Strong",   "🟡"),
+                (0.55, "Moderate", "🟠"),
+                (0.00, "Risky",    "🔴"),
+            ],
+            "O2.5": [
+                (0.60, "Elite",    "🟢"),
+                (0.50, "Strong",   "🟡"),
+                (0.45, "Moderate", "🟠"),
+                (0.00, "Risky",    "🔴"),
+            ],
+            "BTTS": [
+                (0.58, "Elite",    "🟢"),
+                (0.52, "Strong",   "🟡"),
+                (0.47, "Moderate", "🟠"),
+                (0.00, "Risky",    "🔴"),
+            ],
         }
         for cutoff, name, icon in thresholds.get(market_key, thresholds["O2.5"]):
             if true_p >= cutoff:
@@ -1418,6 +1443,7 @@ def soccer_app():
     # =========================
     # ----- Session Setup -----
     # =========================
+
     def init_state():
         st.session_state.setdefault("matches", [])
         st.session_state.setdefault("saved_bets", [])
@@ -1430,17 +1456,20 @@ def soccer_app():
     # =========================
     # --------- App -----------
     # =========================
-    st.title("⚽ Moneyball Phil — Soccer EV App (v3.2)")
-    st.caption("Over 1.5 • Over 2.5 • BTTS — True % vs Implied % with EV/ROI • Multi-match • Saved Bets • N-Leg Parlay")
+
+    st.subheader("⚽ Soccer EV App (v3.2)")
     init_state()
 
     # ---------------- Inputs ----------------
     st.subheader("➕ Add / Compute a Match (Season totals only)")
+
     if "reset_seed" not in st.session_state:
         st.session_state["reset_seed"] = 0
+
     def reset_inputs():
         st.session_state["reset_seed"] += 1
         st.rerun()
+
     seed = st.session_state["reset_seed"]
 
     def per_match(total_str, games_str):
@@ -1457,7 +1486,7 @@ def soccer_app():
     st.markdown("### Home Team — Season Totals")
     hcol1, hcol2, hcol3 = st.columns(3)
     with hcol1:
-        home_team = st.text_input("Home Team", value="", key=f"home_team_name_{seed}", placeholder="Team name")
+        home_team = st.text_input("Home Team", value="", key=f"home_team_name_{seed}")
     with hcol2:
         home_xg_total  = st.text_input("Home xG (SEASON TOTAL)",  value="", key=f"home_xg_total_{seed}")
         home_xga_total = st.text_input("Home xGA (SEASON TOTAL)", value="", key=f"home_xga_total_{seed}")
@@ -1468,12 +1497,13 @@ def soccer_app():
     _home_xga_ag_val = per_match(home_xga_total, home_season_matches)
     home_xg_for = f"{_home_xg_for_val:.3f}" if _home_xg_for_val is not None else ""
     home_xga_ag = f"{_home_xga_ag_val:.3f}" if _home_xga_ag_val is not None else ""
+    st.caption(f"Home per-match → xG={(_home_xg_for_val or 0):.3f}, xGA={(_home_xga_ag_val or 0):.3f}")
 
     # ---- AWAY TEAM ----
     st.markdown("### Away Team — Season Totals")
     acol1, acol2, acol3 = st.columns(3)
     with acol1:
-        away_team = st.text_input("Away Team", value="", key=f"away_team_name_{seed}", placeholder="Team name")
+        away_team = st.text_input("Away Team", value="", key=f"away_team_name_{seed}")
     with acol2:
         away_xg_total  = st.text_input("Away xG (SEASON TOTAL)",  value="", key=f"away_xg_total_{seed}")
         away_xga_total = st.text_input("Away xGA (SEASON TOTAL)", value="", key=f"away_xga_total_{seed}")
@@ -1484,6 +1514,7 @@ def soccer_app():
     _away_xga_ag_val = per_match(away_xga_total, away_season_matches)
     away_xg_for = f"{_away_xg_for_val:.3f}" if _away_xg_for_val is not None else ""
     away_xga_ag = f"{_away_xga_ag_val:.3f}" if _away_xga_ag_val is not None else ""
+    st.caption(f"Away per-match → xG={(_away_xg_for_val or 0):.3f}, xGA={(_away_xga_ag_val or 0):.3f}")
 
     # ---- ODDS INPUTS ----
     st.markdown("### Odds (American or Decimal)")
@@ -1508,13 +1539,18 @@ def soccer_app():
     # =========================
     # ------ Compute Core -----
     # =========================
-    def compute_match(label, home_xg_for_s, away_xga_s, away_xg_for_s, home_xga_s, odds_dict):
-        for name, val in {
+
+    def compute_match(label: str,
+                      home_xg_for_s: str, away_xga_s: str,
+                      away_xg_for_s: str, home_xga_s: str,
+                      odds_dict: Dict[str, str]):
+        fields = {
             "Home xG For": home_xg_for_s, "Away xGA Against": away_xga_s,
             "Away xG For": away_xg_for_s, "Home xGA Against": home_xga_s
-        }.items():
+        }
+        for name, val in fields.items():
             if not is_num(val):
-                raise ValueError(f"{name} is not a valid number: '{val}'")
+                raise ValueError(f"{name} invalid: '{val}'")
             if float(val) < 0:
                 raise ValueError(f"{name} cannot be negative.")
 
@@ -1522,6 +1558,7 @@ def soccer_app():
         DEF_FACTOR = 1.2
         lam_home = (hxf * axga) / DEF_FACTOR
         lam_away = (axf * hxga) / DEF_FACTOR
+
         M = safe_goal_matrix(lam_home, lam_away, max_goals=10)
         probs = market_probs_from_matrix(M)
 
@@ -1531,58 +1568,197 @@ def soccer_app():
 
         st.markdown(f"### Results for {label}")
         results = []
-        for key, label_mkt, imp, dec, odds_str in [
+        markets = [
             ("O1.5", "Over 1.5", imp15, dec15, odds_dict["O1.5"]),
             ("O2.5", "Over 2.5", imp25, dec25, odds_dict["O2.5"]),
             ("BTTS", "BTTS",     impBT, decBT, odds_dict["BTTS"]),
-        ]:
+        ]
+        for key, label_mkt, imp, dec, odds_str in markets:
             true_p = probs[key]
             ev = roi_per_dollar(true_p, dec)
             tier, badge = tier_from_true(true_p, key)
-            results.append({"key": key, "label": label_mkt, "true": true_p,
-                            "imp": imp, "ev": ev, "dec": dec,
-                            "odds_str": odds_str, "tier": tier, "badge": badge})
-            st.write(f"{label_mkt}: True {pct(true_p)}, Implied {pct(imp)}, EV {pct(ev)} → Tier: **{tier}** {badge}")
+            results.append({
+                "key": key, "label": label_mkt, "true": true_p, "imp": imp,
+                "ev": ev, "dec": dec, "odds_str": odds_str, "tier": tier, "badge": badge
+            })
+            st.write(f"{label_mkt}: True {pct(true_p)}, Implied {pct(imp)}, EV {pct(ev)} → **{tier}** {badge}")
 
         st.markdown("---")
         best_value = max(results, key=lambda r: r["ev"])
         if best_value["ev"] >= 0.05:
-            st.success(f"**Value Play:** {best_value['label']} ({best_value['odds_str']}) • EV {pct(best_value['ev'])} • True {pct(best_value['true'])} • {best_value['tier']} {best_value['badge']}")
+            st.success(f"Value Play: {best_value['label']} ({best_value['odds_str']}) • EV {pct(best_value['ev'])} • True {pct(best_value['true'])}")
         else:
             st.warning("No value play (all EV < 5%).")
+
         eligible_safe = [r for r in results if r['ev'] >= 0.05]
         if eligible_safe:
             best_safe = max(eligible_safe, key=lambda r: r["true"])
-            st.info(f"**Safe Play:** {best_safe['label']} ({best_safe['odds_str']}) • EV {pct(best_safe['ev'])} • True {pct(best_safe['true'])} • {best_safe['tier']} {best_safe['badge']}")
+            st.info(f"Safe Play: {best_safe['label']} ({best_safe['odds_str']}) • EV {pct(best_safe['ev'])} • True {pct(best_safe['true'])}")
         else:
-            st.info("No safe play (no EV ≥ 5%).")
+            st.info("No safe play.")
 
-        odds_parsed = {"O1.5": {"imp": imp15, "dec": dec15, "str": odds_dict["O1.5"]},
-                       "O2.5": {"imp": imp25, "dec": dec25, "str": odds_dict["O2.5"]},
-                       "BTTS": {"imp": impBT, "dec": decBT, "str": odds_dict["BTTS"]}}
+        odds_parsed = {
+            "O1.5": {"imp": imp15, "dec": dec15, "str": odds_dict["O1.5"]},
+            "O2.5": {"imp": imp25, "dec": dec25, "str": odds_dict["O2.5"]},
+            "BTTS": {"imp": impBT, "dec": decBT, "str": odds_dict["BTTS"]},
+        }
         return probs, odds_parsed, (lam_home, lam_away)
 
     odds_dict = {"O1.5": odds_o15, "O2.5": odds_o25, "BTTS": odds_btts}
     label = f"{home_team} vs {away_team}"
+
     if compute_only or compute_and_save:
         try:
-            probs, odds_parsed, (lam_h, lam_a) = compute_match(label, home_xg_for, away_xga_ag, away_xg_for, home_xga_ag, odds_dict)
+            probs, odds_parsed, (lam_h, lam_a) = compute_match(
+                label, home_xg_for, away_xga_ag, away_xg_for, home_xga_ag, odds_dict
+            )
             if compute_and_save:
-                rec = {"id": next_id(), "label": label, "lambda_home": lam_h, "lambda_away": lam_a,
-                       "probs": probs, "odds": {"O1.5": odds_parsed["O1.5"],
-                                                "O2.5": odds_parsed["O2.5"],
-                                                "BTTS": odds_parsed["BTTS"]}}
+                rec = {
+                    "id": next_id(),
+                    "label": label,
+                    "lambda_home": lam_h,
+                    "lambda_away": lam_a,
+                    "probs": probs,
+                    "odds": {
+                        "O1.5": odds_parsed["O1.5"],
+                        "O2.5": odds_parsed["O2.5"],
+                        "BTTS": odds_parsed["BTTS"],
+                    }
+                }
                 st.session_state["matches"].append(rec)
                 st.success("Match saved.")
         except Exception as e:
             st.error(f"⚠️ Compute error: {e}")
 
-    # ---------------- Saved Matches, Saved Bets, Parlay Builder ----------------
-    # (unchanged from your working v3.2 code — include full details here)
-    # + 🌍 Global Parlay Button added to Saved Bets section
+    # ---------------- Saved Matches ----------------
+    st.markdown("---")
+    st.subheader("📚 Saved Matches")
+    if not st.session_state["matches"]:
+        st.info("No matches saved yet.")
+    else:
+        for match in list(st.session_state["matches"]):
+            st.markdown(f"#### {match['label']}")
+            lam_cols = st.columns([1,1,1,1,1.2])
+            lam_cols[0].metric("λ Home",  f"{match['lambda_home']:.2f}")
+            lam_cols[1].metric("λ Away",  f"{match['lambda_away']:.2f}")
+            lam_cols[2].metric("Total λ", f"{match['lambda_home']+match['lambda_away']:.2f}")
+            with lam_cols[4]:
+                if st.button("🗑️ Delete Match", key=f"btn_del_match_{match['id']}"):
+                    st.session_state["matches"] = [m for m in st.session_state["matches"] if m["id"] != match["id"]]
+                    st.session_state["saved_bets"] = [b for b in st.session_state.get("saved_bets", []) if b.get("match_id") != match["id"]]
+                    st.rerun()
 
-    # ... (include your entire Saved Matches / Saved Bets / Parlay Builder code here unchanged,
-    # just add: if st.button("🌍 Global Parlay", key="btn_global_parlay"): st.session_state['global_parlay'].extend([...]))
+            head = st.columns([1.2,1,1,1,1,1,1])
+            head[0].write("**Market**")
+            head[1].write("**True %**")
+            head[2].write("**Implied %**")
+            head[3].write("**Edge**")
+            head[4].write("**EV %**")
+            head[5].write("**Tier**")
+            head[6].write("**Save**")
+            for mkt_key, mkt_label in [("O1.5","Over 1.5"),("O2.5","Over 2.5"),("BTTS","BTTS")]:
+                true_p = match["probs"][mkt_key]
+                imp = match["odds"][mkt_key]["imp"]
+                dec = match["odds"][mkt_key]["dec"]
+                ev = roi_per_dollar(true_p, dec)
+                edge_pp = (true_p - imp)
+                tier, badge = tier_from_true(true_p, mkt_key)
+                row = st.columns([1.2,1,1,1,1,1,1])
+                row[0].write(mkt_label)
+                row[1].write(pct(true_p))
+                row[2].write(pct(imp))
+                row[3].write(f"{edge_pp*100:.2f} pp")
+                row[4].write(pct(ev))
+                row[5].write(f"{tier} {badge}")
+                if row[6].button(f"💾 Save {mkt_label}", key=f"save_{match['id']}_{mkt_key}"):
+                    bet_id = next_id()
+                    st.session_state["saved_bets"].append({
+                        "id": bet_id,
+                        "match_id": match["id"],
+                        "match_label": match["label"],
+                        "market": mkt_key,
+                        "market_label": mkt_label,
+                        "true_p": true_p,
+                        "implied_p": imp,
+                        "dec": dec,
+                        "odds_str": match["odds"][mkt_key]["str"],
+                    })
+                    st.success(f"Saved bet: {match['label']} — {mkt_label}")
+
+    # ---------------- Saved Bets ----------------
+    st.markdown("---")
+    st.subheader("💾 Saved Bets")
+    bets = st.session_state.get("saved_bets", [])
+    if not bets:
+        st.info("No saved bets yet.")
+    else:
+        h = st.columns([0.6,2.8,1,1,1,1,1.2,0.8])
+        h[0].write("**Bet ID**")
+        h[1].write("**Match | Market**")
+        h[2].write("**True %**")
+        h[3].write("**Implied %**")
+        h[4].write("**EV %**")
+        h[5].write("**Odds**")
+        h[6].write("**Tier**")
+        h[7].write("**Delete**")
+        for b in list(bets):
+            true_p, dec = float(b["true_p"]), float(b["dec"])
+            implied_p = float(b.get("implied_p", 1.0/dec if dec>0 else 0.0))
+            ev = roi_per_dollar(true_p, dec)
+            r = st.columns([0.6,2.8,1,1,1,1,1.2,0.8])
+            r[0].write(str(b["id"]))
+            r[1].write(f"{b['match_label']} | {b['market_label']}")
+            r[2].write(pct(true_p))
+            r[3].write(pct(implied_p))
+            r[4].write(pct(ev))
+            r[5].write(b["odds_str"])
+            tname, ticon = tier_from_true(true_p, b["market"])
+            r[6].write(f"{tname} {ticon}")
+            with r[7]:
+                if st.button("🗑️", key=f"del_bet_{b['id']}"):
+                    st.session_state["saved_bets"] = [x for x in bets if x["id"] != b["id"]]
+                    st.rerun()
+
+        # 🌍 Global Parlay Button
+        if st.button("🌍 Add ALL Saved Bets to Global Parlay", key="btn_add_all_soccer_global_parlay"):
+            for b in st.session_state["saved_bets"]:
+                add_to_global_parlay("Soccer", f"{b['match_label']} — {b['market_label']}", float(b["dec"]), float(b["true_p"]))
+            st.success("✅ All saved soccer bets added to Global Parlay!")
+
+    # ---------------- N-Leg Parlay Builder ----------------
+    st.markdown("---")
+    st.subheader("🎛️ Parlay Builder (any number of legs)")
+    saved = st.session_state.get("saved_bets", [])
+    if len(saved) < 2:
+        st.info("Save at least two bets.")
+    else:
+        def bet_label(b): return f"{b['id']} | {b['match_label']} | {b['market_label']} ({b['odds_str']})"
+        legs = st.multiselect("Choose parlay legs (2+):", options=saved, format_func=bet_label, key="parlay_legs_sel")
+        if len(legs) >= 2:
+            from math import prod
+            p_trues = [float(b["true_p"]) for b in legs]
+            decs = [float(b["dec"]) for b in legs]
+            true_parlay, fallback_dec = prod(p_trues), prod(decs)
+            book_parlay_odds_str = st.text_input("Sportsbook Parlay Odds", value="", key="parlay_book_odds_any")
+            dec_parlay, imp_parlay, using_book_price = None, None, False
+            if book_parlay_odds_str.strip():
+                try:
+                    imp_parlay, dec_parlay = parse_odds(book_parlay_odds_str.strip())
+                    using_book_price = True
+                except: st.warning("Could not parse book odds.")
+            if dec_parlay is None:
+                dec_parlay = fallback_dec
+                imp_parlay = 1.0 / dec_parlay if dec_parlay > 0 else 0.0
+            ev_parlay = roi_per_dollar(true_parlay, dec_parlay)
+            p_tier, p_badge = tier_from_ev_simple(ev_parlay)
+            g1,g2,g3,g4,g5,g6 = st.columns(6)
+            g1.metric("# Legs", f"{len(legs)}")
+            g2.metric("Parlay Decimal", f"{dec_parlay:.3f}")
+            g3.metric("True %", f"{true_parlay*100:.2f}%")
+            g4.metric("Implied %", f"{imp_parlay*100:.2f}%")
+            g5.metric("Edge", f"{(true_parlay-imp_parlay)*100:.2f} pp")
+            g6.metric("EV %", f"{ev_parlay*100:.2f}%")
+            st.write(f"Parlay Tier: {p_tier} {p_badge}")
 
 
 
