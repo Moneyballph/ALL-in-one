@@ -1303,166 +1303,194 @@ def nba_app():
         df = pd.DataFrame(st.session_state.nba_board)
         st.dataframe(df, use_container_width=True)
 
-# =====================================================
-# ================= MODULE: Soccer EV ==================
-# (Updated with % display instead of decimals)
-# =====================================================
+# =========================
+# Soccer EV Module
+# =========================
+
+import math
+from typing import Dict, Tuple
+import numpy as np
+import streamlit as st
+
 def soccer_app():
-    st.header("⚽ Moneyball Phil — Soccer EV (O1.5 / O2.5 / BTTS)")
+    # =========================
+    # --------- Utils ---------
+    # =========================
 
-    import numpy as np
-
-    # init
-    st.session_state.setdefault("matches", [])
-    st.session_state.setdefault("saved_bets", [])
-    st.session_state.setdefault("id_counter_soc", 1)
-
-    def next_id():
-        st.session_state["id_counter_soc"] += 1
-        return st.session_state["id_counter_soc"]
-
-    def american_to_decimal_local(odds: float) -> float:
+    def american_to_decimal(odds: float) -> float:
+        if odds == 0:
+            raise ValueError("American odds cannot be 0.")
         return 1.0 + (odds / 100.0) if odds > 0 else 1.0 + (100.0 / abs(odds))
 
-    def parse_odds(odds_input: str):
+    def parse_odds(odds_input: str) -> Tuple[float, float]:
         s = str(odds_input).strip()
-        if s.startswith(('+','-')):
-            am = float(s); dec = american_to_decimal_local(am)
-            return 1.0/dec, dec
-        dec = float(s) 
-        if dec <= 1.0: raise ValueError("Decimal odds must be > 1.0")
-        return 1.0/dec, dec
+        if not s:
+            raise ValueError("Odds field is empty.")
+        if s.startswith(('+', '-')):
+            am = float(s)
+            dec = american_to_decimal(am)
+            if dec <= 1.0 or not np.isfinite(dec):
+                raise ValueError("Invalid American odds → decimal ≤ 1.")
+            return 1.0 / dec, dec
+        dec = float(s)
+        if dec <= 1.0 or not np.isfinite(dec):
+            raise ValueError("Decimal odds must be > 1.0")
+        return 1.0 / dec, dec
+
+    def roi_per_dollar(true_p: float, dec_odds: float) -> float:
+        return true_p * (dec_odds - 1.0) - (1.0 - true_p)
+
+    def pct(x: float) -> str:
+        try:
+            return f"{float(x)*100:.2f}%"
+        except Exception:
+            return "—"
+
+    def tier_from_true(true_p: float, market_key: str) -> tuple[str, str]:
+        if true_p is None:
+            return "—", "⚪"
+        thresholds = {
+            "O1.5": [(0.75, "Elite", "🟢"), (0.65, "Strong", "🟡"), (0.55, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
+            "O2.5": [(0.60, "Elite", "🟢"), (0.50, "Strong", "🟡"), (0.45, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
+            "BTTS": [(0.58, "Elite", "🟢"), (0.52, "Strong", "🟡"), (0.47, "Moderate", "🟠"), (0.00, "Risky", "🔴")],
+        }
+        for cutoff, name, icon in thresholds.get(market_key, thresholds["O2.5"]):
+            if true_p >= cutoff:
+                return name, icon
+        return "Risky", "🔴"
+
+    def tier_from_ev_simple(ev_roi: float):
+        if ev_roi is None:
+            return "—", "⚪"
+        if ev_roi >= 0.20:   return "Elite", "🟩"
+        if ev_roi >= 0.10:   return "Strong", "🟨"
+        if ev_roi >= 0.05:   return "Moderate", "🟧"
+        return "Risky", "🟥"
 
     def poisson_pmf(k: int, lam: float) -> float:
-        if not np.isfinite(lam) or lam < 0: return np.nan
+        if not np.isfinite(lam) or lam < 0:
+            return np.nan
         try:
             return math.exp(-lam) * lam**k / math.factorial(k)
         except OverflowError:
             return np.nan
 
     def safe_goal_matrix(lam_home: float, lam_away: float, max_goals: int = 10):
-        for lam in [lam_home, lam_away]:
-            if not np.isfinite(lam): raise ValueError("λ not finite")
-            if lam < 0: raise ValueError("λ negative")
         lam_home = float(np.clip(lam_home, 0.0, 4.0))
         lam_away = float(np.clip(lam_away, 0.0, 4.0))
-        h = np.array([poisson_pmf(i, lam_home) for i in range(max_goals+1)], dtype=float)
-        a = np.array([poisson_pmf(j, lam_away) for j in range(max_goals+1)], dtype=float)
-        M = np.outer(h, a); total = M.sum()
-        if not np.isfinite(total) or total <= 0: raise ValueError("Bad distribution")
-        return M/total
+        h = np.array([poisson_pmf(i, lam_home) for i in range(max_goals + 1)], dtype=float)
+        a = np.array([poisson_pmf(j, lam_away) for j in range(max_goals + 1)], dtype=float)
+        M = np.outer(h, a)
+        return M / M.sum()
 
     def market_probs_from_matrix(M):
         over15 = over25 = btts = 0.0
         H, A = M.shape
         for i in range(H):
             for j in range(A):
-                p = M[i,j]
+                p = M[i, j]
                 if i + j >= 2: over15 += p
                 if i + j >= 3: over25 += p
                 if i >= 1 and j >= 1: btts += p
         return {"O1.5": over15, "O2.5": over25, "BTTS": btts}
 
-    # inputs
-    st.subheader("Add / Compute a Match")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        home_team = st.text_input("Home Team", key="s_home")
-        home_xg_total = st.text_input("Home xG (SEASON TOTAL)", key="s_hxg")
-        home_matches = st.text_input("Matches Played (SEASON TOTAL)", key="s_hm")
-    with c2:
-        away_team = st.text_input("Away Team", key="s_away")
-        away_xg_total = st.text_input("Away xG (SEASON TOTAL)", key="s_axg")
-        away_matches = st.text_input("Away Matches (SEASON TOTAL)", key="s_am")
-    with c3:
-        home_xga_total = st.text_input("Home xGA (SEASON TOTAL)", key="s_hxga")
-        away_xga_total = st.text_input("Away xGA (SEASON TOTAL)", key="s_axga")
-        _ = st.write("")
-
-    def per_match(total_s, games_s):
+    def is_num(x) -> bool:
         try:
-            total = float(str(total_s).strip()); games = float(str(games_s).strip())
-            if games <= 0: return None
-            return total / games
-        except: return None
+            return np.isfinite(float(x))
+        except:
+            return False
 
-    h_for = per_match(home_xg_total, home_matches)
-    h_against = per_match(home_xga_total, home_matches)
-    a_for = per_match(away_xg_total, away_matches)
-    a_against = per_match(away_xga_total, away_matches)
+    # =========================
+    # --------- App UI --------
+    # =========================
 
-    st.caption(f"Home per-match: xG {h_for or 0:.3f}, xGA {h_against or 0:.3f} | Away per-match: xG {a_for or 0:.3f}, xGA {a_against or 0:.3f}")
+    st.header("⚽ Moneyball Phil — Soccer EV")
+    st.caption("Over 1.5 • Over 2.5 • BTTS — True % vs Implied % • EV/ROI • Saved Bets • Parlays")
 
-    oc1, oc2, oc3 = st.columns(3)
-    with oc1:
-        odds_o15 = st.text_input("Over 1.5 Odds", key="s_o15")
-    with oc2:
-        odds_o25 = st.text_input("Over 2.5 Odds", key="s_o25")
-    with oc3:
-        odds_btts = st.text_input("BTTS Odds", key="s_btts")
+    st.subheader("➕ Add / Compute a Match")
 
-    cbtn1, cbtn2 = st.columns([1,1])
-    compute = cbtn1.button("Compute Only")
-    compute_save = cbtn2.button("Compute & Save Match")
+    # Inputs
+    home_team = st.text_input("Home Team")
+    away_team = st.text_input("Away Team")
+    home_xg_for = st.number_input("Home xG For (per match)", min_value=0.0, step=0.1)
+    home_xga_ag = st.number_input("Home xGA Against (per match)", min_value=0.0, step=0.1)
+    away_xg_for = st.number_input("Away xG For (per match)", min_value=0.0, step=0.1)
+    away_xga_ag = st.number_input("Away xGA Against (per match)", min_value=0.0, step=0.1)
 
-    if compute or compute_save:
+    odds_o15 = st.text_input("Over 1.5 Odds")
+    odds_o25 = st.text_input("Over 2.5 Odds")
+    odds_btts = st.text_input("BTTS Odds")
+
+    compute = st.button("Compute")
+
+    if "matches" not in st.session_state: st.session_state.matches = []
+    if "saved_bets" not in st.session_state: st.session_state.saved_bets = []
+    if "global_parlay" not in st.session_state: st.session_state.global_parlay = []
+
+    if compute:
         try:
-            DEF_FACTOR = 1.2
-            lam_home = (float(h_for) * float(a_against)) / DEF_FACTOR
-            lam_away = (float(a_for) * float(h_against)) / DEF_FACTOR
-            M = safe_goal_matrix(lam_home, lam_away, max_goals=10)
+            lam_home = (home_xg_for * away_xga_ag) / 1.2
+            lam_away = (away_xg_for * home_xga_ag) / 1.2
+            M = safe_goal_matrix(lam_home, lam_away)
             probs = market_probs_from_matrix(M)
+
             imp15, dec15 = parse_odds(odds_o15)
             imp25, dec25 = parse_odds(odds_o25)
             impBT, decBT = parse_odds(odds_btts)
-        except Exception as e:
-            st.error(f"Compute error: {e}")
-        else:
-            st.success(f"Results for {home_team} vs {away_team}")
+
+            results = []
             for key, label, imp, dec, odds_str in [
-                ("O1.5","Over 1.5", imp15, dec15, odds_o15),
-                ("O2.5","Over 2.5", imp25, dec25, odds_o25),
-                ("BTTS","BTTS",     impBT, decBT, odds_btts),
+                ("O1.5","Over 1.5",imp15,dec15,odds_o15),
+                ("O2.5","Over 2.5",imp25,dec25,odds_o25),
+                ("BTTS","BTTS",impBT,decBT,odds_btts),
             ]:
                 true_p = probs[key]
-                ev = (true_p * (dec-1.0)) - (1.0 - true_p)
-                st.write(f"{label}: True {true_p*100:.2f}% | EV {ev*100:.2f}% | Odds {odds_str}")
-            if compute_save:
-                rec = {
-                    "id": next_id(), "label": f"{home_team} vs {away_team}",
-                    "probs": {
-                        "O1.5": round(probs["O1.5"]*100, 2),  # ✅ store as %
-                        "O2.5": round(probs["O2.5"]*100, 2),
-                        "BTTS": round(probs["BTTS"]*100, 2)
-                    },
-                    "probs_frac": probs,  # ✅ keep raw fractions for EV/parlay
-                    "odds": {"O1.5": odds_o15, "O2.5": odds_o25, "BTTS": odds_btts}
-                }
-                st.session_state.matches.append(rec); st.success("Match saved.")
+                ev = roi_per_dollar(true_p, dec)
+                tier, badge = tier_from_true(true_p, key)
+                results.append((label, true_p, imp, ev, odds_str, tier, badge))
+                st.write(f"{label}: True {pct(true_p)}, Implied {pct(imp)}, EV {pct(ev)} → **{tier}** {badge}")
 
-    st.markdown("---")
-    st.subheader("Saved Bets")
-    for match in list(st.session_state.matches):
-        st.markdown(f"**{match['label']}**")
-        for key, label in [("O1.5","Over 1.5"), ("O2.5","Over 2.5"), ("BTTS","BTTS")]:
-            row = st.columns([1.4, 1.2, 1.2, 1.3])
-            true_p_pct = float(match["probs"][key])
-            odds_str = match["odds"][key]
-            odds_val = None
-            try:
-                if str(odds_str).strip().startswith(('+','-')):
-                    odds_val = float(str(odds_str).replace("+",""))
-                else:
-                    dec = float(odds_str); odds_val = decimal_to_american(dec)
-            except Exception:
-                pass
-            row[0].write(label)
-            row[1].write(f"True: {true_p_pct:.2f}%")  # ✅ now percentage
-            row[2].write(f"Odds: {odds_str}")
-            with row[3]:
-                if odds_val is not None and st.button("🌍 Add", key=f"add_soc_{match['id']}_{key}"):
-                    add_to_global_parlay("Soccer", f"{match['label']} — {label}", odds_val, match["probs_frac"][key])
-                    st.success("Added to Global Parlay")
+            best_value = max(results, key=lambda r: r[3])
+            if best_value[3] >= 0.05:
+                st.success(f"Value Play: {best_value[0]} {best_value[4]} EV {pct(best_value[3])} True {pct(best_value[1])} {best_value[6]}")
+            else:
+                st.warning("No strong value play found.")
+
+            # Save bets
+            for label, true_p, imp, ev, odds_str, tier, badge in results:
+                if st.button(f"Save {label} ({odds_str})"):
+                    st.session_state.saved_bets.append({
+                        "match": f"{home_team} vs {away_team}",
+                        "market": label,
+                        "true_p": true_p,
+                        "implied_p": imp,
+                        "odds": odds_str,
+                        "ev": ev
+                    })
+                    st.success(f"Saved {label} for {home_team} vs {away_team}")
+
+        except Exception as e:
+            st.error(f"⚠️ Error: {e}")
+
+    # =========================
+    # Saved Bets
+    # =========================
+    st.subheader("💾 Saved Bets")
+
+    if not st.session_state.saved_bets:
+        st.info("No bets saved yet.")
+    else:
+        for i,b in enumerate(st.session_state.saved_bets):
+            st.write(f"**{b['match']} | {b['market']}** — True {pct(b['true_p'])}, Implied {pct(b['implied_p'])}, EV {pct(b['ev'])}, Odds {b['odds']}")
+            col1,col2=st.columns([1,3])
+            with col1:
+                if st.button(f"🗑️ Delete {i}"):
+                    st.session_state.saved_bets.pop(i)
+                    st.experimental_rerun()
+            with col2:
+                if st.button(f"🌍 Add to Global Parlay {i}"):
+                    st.session_state.global_parlay.append(b)
+                    st.success("Added to Global Parlay ✅")
 
 
 
