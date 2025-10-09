@@ -336,25 +336,39 @@ def nfl_app():
         def_yds = st.number_input("Defense WR Yards Allowed/Game", value=0.0)
         def_rec = st.number_input("Defense WR Receptions Allowed/Game", value=0.0)
 
-        if st.button("Simulate WR Props"):
+                if st.button("Simulate WR Props"):
             tier = classify_def_tier(def_yds)
-            avg_ypg = (ypg + def_yds) / 2
-            avg_rpg = (rpg + def_rec) / 2
+
+            # --- League baseline averages for WR scaling ---
+            LEAGUE_WR_YDS = 150.0
+            LEAGUE_WR_RECS = 12.0
+
+            # --- Scale player production based on defense strength ---
+            avg_ypg = ypg * (def_yds / LEAGUE_WR_YDS)
+            avg_rpg = rpg * (def_rec / LEAGUE_WR_RECS)
+
+            # --- Apply your existing defensive tier adjustments ---
             adj_ypg, _ = apply_defense_adjustments(avg_ypg, 0.0, tier)
+
+            # --- Run logistic probability simulations ---
             st.session_state.nfl_temp_props = []
             std_prob = logistic_prob(adj_ypg, std_line)
             alt_prob = logistic_prob(adj_ypg, alt_line)
             rec_prob = logistic_prob(avg_rpg, rec_line, scale=1.5)
+
+            # --- Display results ---
             st.info(f"Opponent Defense Tier: **{tier}**")
             st.success(f"📈 Over {std_line} Rec Yds → {std_prob:.2f}%")
             st.success(f"📈 Over {alt_line} Alt Rec Yds → {alt_prob:.2f}%")
             st.success(f"🎯 Over {rec_line} Receptions → {rec_prob:.2f}%")
-            st.success(f"📉 Under {rec_line} Receptions → {round(100-rec_prob,2):.2f}%")
+            st.success(f"📉 Under {rec_line} Receptions → {round(100 - rec_prob, 2):.2f}%")
+
+            # --- Save props to temporary play board ---
             add_temp_play(name, f"Over {std_line} Rec Yds", std_prob, over_std, "WR")
-            add_temp_play(name, f"Under {std_line} Rec Yds", round(100-std_prob,2), under_std, "WR")
+            add_temp_play(name, f"Under {std_line} Rec Yds", round(100 - std_prob, 2), under_std, "WR")
             add_temp_play(name, f"Over {alt_line} Alt Rec Yds", alt_prob, alt_odds, "WR")
             add_temp_play(name, f"Over {rec_line} Receptions", rec_prob, rec_over_odds, "WR")
-            add_temp_play(name, f"Under {rec_line} Receptions", round(100-rec_prob,2), rec_under_odds, "WR")
+            add_temp_play(name, f"Under {rec_line} Receptions", round(100 - rec_prob, 2), rec_under_odds, "WR")
 
     # ---- RB Module ----
     if position == "Running Back":
