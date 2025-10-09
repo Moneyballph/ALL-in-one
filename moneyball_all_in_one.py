@@ -329,7 +329,7 @@ position = st.sidebar.selectbox(
 )
 
     # ---- WR Module ----
-    if position == "Wide Receiver":
+      if position == "Wide Receiver":
         st.header("🎯 Wide Receiver Inputs")
         name = st.text_input("Wide Receiver Name", value="")
         opp = st.text_input("Opponent Team", value="")
