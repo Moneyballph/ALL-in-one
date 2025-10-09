@@ -318,15 +318,7 @@ def nfl_app():
             add_temp_play(name, f"Over {alt_line} Alt Pass Yds", alt_prob, alt_odds, "QB")
             add_temp_play(name, f"Under {td_line} Pass TDs", under_td_prob, td_under_odds, "QB")
 
-# =====================================
-# 🏈 WIDE RECEIVER MODULE (FINAL FIXED)
-# =====================================
 
-# Position selector (make sure this is above all modules)
-position = st.sidebar.selectbox(
-    "Select Position",
-    ["Quarterback", "Running Back", "Wide Receiver"]
-)
 
     # ---- WR Module ----
       if position == "Wide Receiver":
