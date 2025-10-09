@@ -336,7 +336,7 @@ def nfl_app():
         def_yds = st.number_input("Defense WR Yards Allowed/Game", value=0.0)
         def_rec = st.number_input("Defense WR Receptions Allowed/Game", value=0.0)
 
-                if st.button("Simulate WR Props"):
+        if st.button("Simulate WR Props"):
             tier = classify_def_tier(def_yds)
 
             # --- League baseline averages for WR scaling ---
