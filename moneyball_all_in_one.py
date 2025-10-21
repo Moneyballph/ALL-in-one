@@ -1213,15 +1213,15 @@ def nba_app():
     import pandas as pd
     import streamlit as st
 
-    # ---------- Header ----------
+    # ---------------- Header ----------------
     st.header("🏀 NBA Simulator")
 
-    # ---------- Session setup ----------
+    # ---------------- Session defaults ----------------
     st.session_state.setdefault("nba_board", [])
     st.session_state.setdefault("nba_saved_plays", [])
     st.session_state.setdefault("last_result_nba", None)
 
-    # ---------- Helpers ----------
+    # ---------------- Helpers ----------------
     def american_to_prob(odds_text):
         if not odds_text:
             return None
@@ -1232,43 +1232,29 @@ def nba_app():
             return None
 
     def defense_tier(rank: int):
-        if rank <= 5:
-            return ("Elite Defense", "🟥", 0.92, "-8%")
-        if rank <= 10:
-            return ("Strong Defense", "🟧", 0.95, "-5%")
-        if rank <= 20:
-            return ("Moderate Defense", "🟨", 1.00, "0%")
-        if rank <= 25:
-            return ("Favorable Defense", "🟩", 1.05, "+5%")
+        if rank <= 5:   return ("Elite Defense", "🟥", 0.92, "-8%")
+        if rank <= 10:  return ("Strong Defense", "🟧", 0.95, "-5%")
+        if rank <= 20:  return ("Moderate Defense", "🟨", 1.00, "0%")
+        if rank <= 25:  return ("Favorable Defense", "🟩", 1.05, "+5%")
         return ("Very Favorable Defense", "🟩", 1.08, "+8%")
 
     def readiness_badge(gp: int, w_new: float):
-        if gp >= 10 and abs(w_new - 1.0) < 1e-9:
-            return "🟢 Current-season stable"
-        if w_new > 0.0:
-            return "🟡 Blended (LY + Current)"
+        if gp >= 10 and abs(w_new - 1.0) < 1e-9: return "🟢 Current-season stable"
+        if w_new > 0.0:                           return "🟡 Blended (LY + Current)"
         return "🔴 Last-season only"
 
     def auto_blend_weight(gp: int, pre_g: int, pre_mpg: float) -> float:
         if gp <= 0:
-            if pre_g >= 3 and pre_mpg >= 15:
-                return 0.10
-            return 0.0
-        if 1 <= gp <= 3:
-            return 0.10
-        if 4 <= gp <= 6:
-            return 0.20
-        if 7 <= gp <= 9:
-            return 0.30
+            return 0.10 if (pre_g >= 3 and pre_mpg >= 15) else 0.0
+        if 1 <= gp <= 3:  return 0.10
+        if 4 <= gp <= 6:  return 0.20
+        if 7 <= gp <= 9:  return 0.30
         return 1.0
 
     def apply_lm_scale(x: float, lm_profile: str, custom_pct: float) -> float:
-        if lm_profile == "None":
-            return x
-        if lm_profile == "Light":
-            return x * 0.95
-        if lm_profile == "Heavy":
-            return x * 0.90
+        if lm_profile == "None":   return x
+        if lm_profile == "Light":  return x * 0.95
+        if lm_profile == "Heavy":  return x * 0.90
         return x * max(0.70, min(1.20, 1.0 + custom_pct / 100.0))
 
     def defense_logit_shift(rank: int) -> float:
@@ -1276,44 +1262,76 @@ def nba_app():
         return max(-0.25, min(0.25, slope * (rank - 15.5)))
 
     def true_prob_from_line(stat_type: str, projection: float, line: float, def_rank: int) -> float:
-        if line <= 0:
-            return 0.10
+        if line <= 0: return 0.10
         scale = 6.5 if stat_type == "Points Only" else 8.0
-        diff = (projection - line) / scale
+        diff  = (projection - line) / scale
         logit = diff + defense_logit_shift(def_rank)
         p = 1.0 / (1.0 + math.exp(-logit))
         return float(max(0.10, min(0.90, round(p, 4))))
 
-    # ---------- Inputs ----------
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        player_name = st.text_input("Player")
-        team = st.text_input("Team")
-        position = st.selectbox("Position", ["PG", "SG", "SF", "PF", "C"])
-    with c2:
-        stat_type = st.radio("Stat Type", ["PRA", "Points Only"], horizontal=True)
-        sportsbook_line = st.number_input("Sportsbook Line (Pts or PRA)", min_value=0.0, step=0.5)
-        odds_over = st.text_input("Over Odds (e.g., -115)")
-    with c3:
-        odds_under = st.text_input("Under Odds (e.g., -105)")
-        opponent = st.text_input("Opponent")
-        defense_rank = st.number_input("Defense Rank vs Pos (1–30)", 1, 30)
+    def ev_symbol(ev):
+        if ev is None: return ""
+        if ev > 0.5:   return "🟩"
+        if ev < -0.5:  return "🟥"
+        return "🟨"
 
-    base_pts = st.number_input("Model Base – Points", min_value=0.0, step=0.1)
-    base_reb = st.number_input("Model Base – Rebounds", min_value=0.0, step=0.1)
-    base_ast = st.number_input("Model Base – Assists", min_value=0.0, step=0.1)
-    recent_avg = st.number_input("Current-Season Avg (Pts or PRA)", min_value=0.0, step=0.1)
-    alt_line = st.number_input("Alt Line (optional)", min_value=0.0, step=0.5)
-    alt_odds = st.text_input("Alt Over Odds")
-    usage = st.number_input("Usage % (est.)", min_value=0.0, max_value=100.0, step=0.1)
-    gp_current = st.number_input("Games Played (this season)", min_value=0, step=1)
-    pre_games = st.number_input("Preseason Games", min_value=0, step=1)
-    pre_mpg = st.number_input("Preseason MPG", min_value=0.0, step=0.5)
-    lm_profile = st.selectbox("Load Management", ["None", "Light", "Heavy", "Custom %"])
-    custom_lm_pct = st.number_input("Custom Role/Minutes % (±)", value=0.0, step=1.0)
+    # Reset inputs quickly
+    def _reset_inputs():
+        keys = [
+            "nba_player","nba_team","nba_pos","nba_stat","nba_line",
+            "nba_odds_over","nba_odds_under","nba_opp","nba_def_rank",
+            "nba_pts","nba_reb","nba_ast","nba_recent","nba_alt_line","nba_alt_odds",
+            "nba_usage","nba_gp","nba_pre_g","nba_pre_mpg","nba_lm","nba_lm_custom"
+        ]
+        for k in keys:
+            if k in st.session_state: del st.session_state[k]
+        st.success("Inputs cleared.")
+        st.experimental_rerun()
 
-    # ---------- Simulate ----------
-    if st.button("Simulate (NBA)", use_container_width=True):
+    # ---------------- Inputs (compact for wide mode) ----------------
+    r1c1, r1c2, r1c3, r1c4 = st.columns([1.2, 1.0, 1.0, 1.0])
+    with r1c1:
+        player_name = st.text_input("Player", key="nba_player")
+        team        = st.text_input("Team", key="nba_team")
+        position    = st.selectbox("Position", ["PG","SG","SF","PF","C"], key="nba_pos")
+        opponent    = st.text_input("Opponent", key="nba_opp")
+    with r1c2:
+        stat_type       = st.radio("Stat Type", ["PRA","Points Only"], horizontal=True, key="nba_stat")
+        sportsbook_line = st.number_input("Sportsbook Line (Pts or PRA)", min_value=0.0, step=0.5, key="nba_line")
+        odds_over       = st.text_input("Over Odds", key="nba_odds_over")
+        odds_under      = st.text_input("Under Odds", key="nba_odds_under")
+    with r1c3:
+        base_pts   = st.number_input("Model Base – Pts", min_value=0.0, step=0.1, key="nba_pts")
+        base_reb   = st.number_input("Model Base – Reb", min_value=0.0, step=0.1, key="nba_reb")
+        base_ast   = st.number_input("Model Base – Ast", min_value=0.0, step=0.1, key="nba_ast")
+        recent_avg = st.number_input("Current-Season Avg (Pts/PRA)", min_value=0.0, step=0.1, key="nba_recent")
+    with r1c4:
+        defense_rank = st.number_input("DEF Rank vs Pos (1–30)", 1, 30, key="nba_def_rank")
+        usage        = st.number_input("Usage % (est.)", 0.0, 100.0, step=0.1, key="nba_usage")
+        alt_line     = st.number_input("Alt Line (optional)", min_value=0.0, step=0.5, key="nba_alt_line")
+        alt_odds     = st.text_input("Alt Over Odds", key="nba_alt_odds")
+
+    r2c1, r2c2, r2c3, r2c4 = st.columns([1.0, 0.9, 0.9, 1.2])
+    with r2c1:
+        gp_current = st.number_input("Games Played (this season)", min_value=0, step=1, key="nba_gp")
+    with r2c2:
+        pre_games  = st.number_input("Preseason Games", min_value=0, step=1, key="nba_pre_g")
+    with r2c3:
+        pre_mpg    = st.number_input("Preseason MPG", min_value=0.0, step=0.5, key="nba_pre_mpg")
+    with r2c4:
+        lm_profile    = st.selectbox("Load Management", ["None","Light","Heavy","Custom %"], key="nba_lm")
+        custom_lm_pct = st.number_input("Custom Role/Minutes % (±)", value=0.0, step=1.0, key="nba_lm_custom")
+
+    act1, act2 = st.columns([1,1])
+    with act1:
+        simulate_clicked = st.button("Simulate (NBA)", use_container_width=True)
+    with act2:
+        if st.button("Reset Inputs", use_container_width=True):
+            _reset_inputs()
+
+    # ---------------- Simulate ----------------
+    if simulate_clicked:
+        # Baselines
         if stat_type == "PRA":
             model_sum = base_pts + base_reb + base_ast
             last_season_base = model_sum
@@ -1322,55 +1340,88 @@ def nba_app():
             last_season_base = base_pts
             current_estimate = recent_avg if recent_avg > 0 else base_pts
 
+        # Blending & LM
         w_new = auto_blend_weight(int(gp_current), int(pre_games), float(pre_mpg))
         w_old = 1.0 - w_new
         blended = w_new * current_estimate + w_old * last_season_base
         blended = apply_lm_scale(blended, lm_profile, custom_lm_pct)
 
+        # Defense tier & weighting
         tier_label, tier_emoji, def_factor, def_pct_txt = defense_tier(int(defense_rank))
         blended *= def_factor
 
+        # Main line probs
         true_p = true_prob_from_line(stat_type, blended, sportsbook_line, int(defense_rank))
         imp_over = american_to_prob(odds_over)
         implied_for_ev = imp_over if imp_over is not None else None
         ev_pct = None if implied_for_ev is None else (true_p - implied_for_ev) * 100.0
         readiness = readiness_badge(int(gp_current), w_new)
 
-        st.markdown(f"### **{player_name or 'Player'} — {('Points' if stat_type=='Points Only' else 'PRA')} Line: {sportsbook_line:g}**")
-        st.markdown(f"**Projected:** {blended:.2f}")
-        st.markdown(f"**Matchup Difficulty:** {tier_emoji} **{tier_label}** (Rank {defense_rank}, {def_pct_txt})")
-        st.markdown(
-            f"**True Probability:** {true_p*100:.2f}% | **Implied Probability:** "
-            f"{(implied_for_ev*100):.2f}%"
-            if implied_for_ev is not None else f"**True Probability:** {true_p*100:.2f}% | **Implied Probability:** —"
-        )
-        if ev_pct is not None:
-            ev_color = "💚" if ev_pct > 0.5 else ("🟨" if abs(ev_pct) <= 0.5 else "🟥")
-            st.markdown(f"**EV:** {ev_color} {ev_pct:+.2f}%")
-        else:
-            st.markdown("**EV:** — (enter Over odds)")
-        st.caption(f"**Blend:** {int(w_old*100)}/{int(w_new*100)} (LY/Current) | **Readiness:** {readiness}")
+        # ------- Compact result row (side-by-side) -------
+        left, right = st.columns([0.62, 0.38])
 
-        # ---- Visual EV bars (no matplotlib) ----
-        st.markdown("#### True vs. Implied Probability — EV Analysis")
-        true_val = true_p * 100
-        imp_val = (implied_for_ev * 100) if implied_for_ev is not None else 0
-        st.write(f"True Probability: {true_val:.1f}%")
-        st.progress(min(int(true_val), 100))
-        st.write(f"Implied Probability: {imp_val:.1f}%")
-        st.progress(min(int(imp_val), 100))
+        with left:
+            st.markdown(
+                f"### **{player_name or 'Player'} — "
+                f"{('Points' if stat_type=='Points Only' else 'PRA')} Line: {sportsbook_line:g}**"
+            )
+            st.markdown(f"**Projected:** {blended:.2f}")
+            st.markdown(f"**Matchup Difficulty:** {tier_emoji} **{tier_label}** (Rank {defense_rank}, {def_pct_txt})")
+            if implied_for_ev is not None:
+                st.markdown(f"**True Probability:** {true_p*100:.2f}% | **Implied Probability:** {implied_for_ev*100:.2f}%")
+                st.markdown(f"**EV:** {ev_symbol(ev_pct)} {ev_pct:+.2f}%")
+            else:
+                st.markdown(f"**True Probability:** {true_p*100:.2f}% | **Implied Probability:** —")
+                st.markdown("**EV:** — (enter Over odds)")
+            st.caption(f"**Blend:** {int(w_old*100)}/{int(w_new*100)} (LY/Current) | **Readiness:** {readiness}")
 
+        with right:
+            st.markdown("#### EV Analysis")
+            true_val = int(round(true_p * 100))
+            st.write(f"True: {true_val:.0f}%")
+            st.progress(min(true_val, 100))
+            if implied_for_ev is not None:
+                imp_val = int(round(implied_for_ev * 100))
+                st.write(f"Implied: {imp_val:.0f}%")
+                st.progress(min(imp_val, 100))
+            else:
+                st.write("Implied: —")
+                st.progress(0)
+
+        # ------- Alt line full analysis -------
         if alt_line and alt_line > 0:
             alt_true = true_prob_from_line(stat_type, blended, alt_line, int(defense_rank))
-            st.info(f"**Alt Over {alt_line:g}:** {alt_true*100:.2f}% (Odds {alt_odds or '—'})")
+            alt_imp  = american_to_prob(alt_odds)
+            alt_ev   = None if alt_imp is None else (alt_true - alt_imp) * 100.0
+            st.markdown("---")
+            st.markdown(f"**Alt Line {alt_line:g}:**  "
+                        f"True {alt_true*100:.2f}%"
+                        + (f" | Implied {alt_imp*100:.2f}% | EV {ev_symbol(alt_ev)} {alt_ev:+.2f}%" if alt_imp is not None else "")
+                        + (f"  *(Odds {alt_odds})*" if alt_odds else ""))
+            alt_c1, alt_c2 = st.columns([1,1])
+            with alt_c1:
+                st.write(f"True: {alt_true*100:.1f}%")
+                st.progress(min(int(round(alt_true*100)), 100))
+            with alt_c2:
+                if alt_imp is not None:
+                    st.write(f"Implied: {alt_imp*100:.1f}%")
+                    st.progress(min(int(round(alt_imp*100)), 100))
+                else:
+                    st.write("Implied: —")
+                    st.progress(0)
 
+        # Row for boards & buttons
         row = {
             "Player": player_name or "Player",
             "Type": "Points" if stat_type == "Points Only" else "PRA",
-            "Line": sportsbook_line,
+            "Line": float(sportsbook_line),
             "Proj": round(blended, 2),
             "True %": f"{true_p*100:.2f}%",
-            "EV%": f"{ev_pct:.2f}%" if ev_pct is not None else "",
+            "TrueFrac": float(true_p),
+            "OverOdds": odds_over,
+            "UnderOdds": odds_under,
+            "Opponent": opponent,
+            "DefenseRank": int(defense_rank),
             "MatchupTier": f"{tier_emoji} {tier_label} ({def_pct_txt})",
             "Blend": f"{int(w_old*100)}/{int(w_new*100)}",
             "Readiness": readiness,
@@ -1378,20 +1429,40 @@ def nba_app():
         st.session_state.last_result_nba = row
         st.session_state.nba_board.append(row)
 
-        # ---------- Buttons ----------
-        c1, c2, c3 = st.columns(3)
-        with c1:
+        # ------- 3 buttons (functional) -------
+        b1, b2, b3 = st.columns(3)
+        with b1:
             if st.button("💾 Save Play (NBA)", use_container_width=True):
                 st.session_state.nba_saved_plays.append(row)
                 st.success("✅ Saved play to NBA board.")
-        with c2:
+        with b2:
             if st.button("🌍 Add Over to Global Parlay (NBA)", use_container_width=True):
-                st.success("✅ Added Over leg to Global Parlay.")
-        with c3:
+                try:
+                    odds_val = int(str(row["OverOdds"]).replace("+",""))
+                    try:
+                        add_to_global_parlay("NBA",
+                                             f"{row['Player']} Over {row['Line']} ({row['Type']})",
+                                             odds_val, float(row["TrueFrac"]))
+                        st.success("✅ Added Over leg to Global Parlay.")
+                    except NameError:
+                        st.warning("Global parlay function not found: add_to_global_parlay.")
+                except Exception:
+                    st.warning("Could not parse Over odds.")
+        with b3:
             if st.button("🌍 Add Under to Global Parlay (NBA)", use_container_width=True):
-                st.success("✅ Added Under leg to Global Parlay.")
+                try:
+                    odds_val = int(str(row["UnderOdds"]).replace("+",""))
+                    try:
+                        add_to_global_parlay("NBA",
+                                             f"{row['Player']} Under {row['Line']} ({row['Type']})",
+                                             odds_val, 1.0 - float(row["TrueFrac"]))
+                        st.success("✅ Added Under leg to Global Parlay.")
+                    except NameError:
+                        st.warning("Global parlay function not found: add_to_global_parlay.")
+                except Exception:
+                    st.warning("Could not parse Under odds.")
 
-    # ---------- Board ----------
+    # ---------------- Board (collapsed) ----------------
     st.markdown("---")
     with st.expander("📈 Top Player Board (NBA)", expanded=False):
         if st.session_state.nba_board:
